@@ -19,7 +19,7 @@ pub enum Kind {
 
     Create, Table,
     Select, From,
-
+    Insert, Into,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -41,15 +41,6 @@ impl fmt::Debug for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         (self.start..self.end).fmt(f)
     }
-}
-
-macro_rules! match_case_insensitive {
-    ($scrutinee:expr,  $($lit:literal => $body:expr),*, _ => $fallback:expr $(,)?) => {{
-        match $scrutinee {
-            $(s if s.eq_ignore_ascii_case($lit) => $body,)*
-            _ => $fallback
-        }
-    }};
 }
 
 #[derive(Debug)]
@@ -90,9 +81,9 @@ impl<'a> Lexer<'a> {
         self.src.get(self.cursor).copied()
     }
 
-    fn peek2(&self) -> Option<u8> {
-        self.src.get(self.cursor + 1).copied()
-    }
+    // fn peek2(&self) -> Option<u8> {
+    //     self.src.get(self.cursor + 1).copied()
+    // }
 
     fn bump(&mut self, n: usize) {
         self.cursor += n;
@@ -157,10 +148,9 @@ impl<'a> Lexer<'a> {
                 self.seek(|c| c.is_ascii_alphanumeric() || c == b'_');
                 let lexeme = self.lexeme();
                 match_case_insensitive!(lexeme,
-                    "create" => Kind::Create,
-                    "table" => Kind::Table,
-                    "select" => Kind::Select,
-                    "from" => Kind::From,
+                    "create" => Kind::Create, "table" => Kind::Table,
+                    "select" => Kind::Select, "from" => Kind::From,
+                    "insert" => Kind::Insert, "into" => Kind::Into,
                     _ => Kind::Ident,
                 )
             }

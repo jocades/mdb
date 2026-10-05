@@ -1,13 +1,13 @@
+#![allow(dead_code)]
 use std::sync::Arc;
 
-use crate::sql::ast::{Column, Type};
-
-use super::ast::{BinOp, Create, Expr, Lit, Stmt};
+use super::ast::{BinOp, Column, Create, Expr, Lit, Stmt, Type};
 use super::lexer::{self, Kind, Lexer, Span};
 
-#[derive(Debug)]
+#[derive(Debug, derive_more::From)]
 #[allow(dead_code)]
 pub enum Error {
+    #[from]
     Lex(lexer::Error),
     Expected {
         expected: Vec<Kind>,
@@ -18,12 +18,6 @@ pub enum Error {
     ExpectedType(Span),
     UnknwonType(Span),
     UnexpectedEof(Span),
-}
-
-impl From<lexer::Error> for Error {
-    fn from(e: lexer::Error) -> Self {
-        Self::Lex(e)
-    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -97,12 +91,13 @@ impl Parser<'_> {
                     let name = self.ident()?;
                     let t = self.peek();
                     ensure!(t.kind == Kind::Ident, Error::ExpectedType(t.span));
-                    let ty = match t.lexeme(self.source) {
+                    let lexeme = t.lexeme(self.source);
+                    let ty = match_case_insensitive!(lexeme,
                         "int" => Type::Integer,
                         "bool" => Type::Boolean,
                         "string" => Type::String,
-                        _ => bail!(Error::ExpectedType(t.span)),
-                    };
+                        _ => bail!(Error::UnknwonType(t.span)),
+                    );
                     self.bump();
                     columns.push(Column { name, ty });
                     match self.peek().kind {
@@ -117,11 +112,11 @@ impl Parser<'_> {
             Kind::Select => {
                 self.bump();
                 let mut projection = Vec::new();
+
                 loop {
                     projection.push(self.expr()?);
-                    match self.peek().kind {
-                        Kind::Comma => self.bump(),
-                        _ => break,
+                    if self.matches(Kind::Comma) {
+                        break;
                     }
                 }
 
@@ -143,6 +138,10 @@ impl Parser<'_> {
                     projection,
                     relation,
                 }
+            }
+
+            Kind::Insert => {
+                todo!()
             }
             _ => {
                 bail!(Error::Expected {
@@ -257,6 +256,14 @@ impl Parser<'_> {
 
     fn is_eof(&self) -> bool {
         self.peek().kind == Kind::Eof
+    }
+
+    fn matches(&mut self, kind: Kind) -> bool {
+        if self.peek().kind != kind {
+            return false;
+        }
+        self.bump();
+        true
     }
 
     fn expect(&mut self, kind: Kind) -> Result<Token> {

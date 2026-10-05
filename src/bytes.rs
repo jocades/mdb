@@ -41,6 +41,7 @@ pub trait BufMut {
     fn put_u16(&mut self, offset: usize, n: u16);
     fn put_u32(&mut self, offset: usize, n: u32);
     fn put_u64(&mut self, offset: usize, n: u64);
+    fn put_slice(&mut self, offset: usize, v: &[u8]);
 }
 
 macro_rules! buf_put_at {
@@ -66,5 +67,9 @@ impl BufMut for [u8] {
 
     fn put_u64(&mut self, offset: usize, n: u64) {
         buf_put_at!(self, offset, n, u64);
+    }
+
+    fn put_slice(&mut self, offset: usize, v: &[u8]) {
+        self[offset..offset + v.len()].copy_from_slice(v);
     }
 }

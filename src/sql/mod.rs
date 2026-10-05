@@ -1,5 +1,5 @@
-pub mod ast;
-pub mod lexer;
-pub mod parser;
+mod ast;
+mod lexer;
+mod parser;
 
-use std::{fmt, ops};
+pub use parser::parse;

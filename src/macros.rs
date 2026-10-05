@@ -13,3 +13,14 @@ macro_rules! ensure {
         }
     };
 }
+
+/// Compare strings case insensitive without allocating
+#[macro_export]
+macro_rules! match_case_insensitive {
+    ($scrutinee:expr,  $($lit:literal => $body:expr),*, _ => $fallback:expr $(,)?) => {{
+        match $scrutinee {
+            $(s if s.eq_ignore_ascii_case($lit) => $body,)*
+            _ => $fallback
+        }
+    }};
+}

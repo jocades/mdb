@@ -1,12 +1,15 @@
 #[macro_use]
 mod macros;
 mod bytes;
-mod page;
-mod pager;
+mod database;
+mod heap;
 mod sql;
+mod storage;
+
+fn main() {}
 
 fn run(source: &str) {
-    match sql::parser::parse(&source) {
+    match sql::parse(&source) {
         Ok(stmts) => println!("{stmts:?}"),
         Err(e) => eprintln!("error: {e:?}"),
     }
@@ -20,7 +23,7 @@ fn run(source: &str) {
 //     }
 // }
 
-fn main() {
+fn repl() {
     use rustyline::DefaultEditor;
     use rustyline::error::ReadlineError;
 
