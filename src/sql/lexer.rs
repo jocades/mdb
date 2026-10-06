@@ -17,9 +17,12 @@ pub enum Kind {
     Comma, Semi,
     LParen, RParen,
 
+
     Create, Table,
     Select, From,
-    Insert, Into,
+    Insert, Into, Values,
+
+    True, False,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -41,6 +44,14 @@ impl fmt::Debug for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         (self.start..self.end).fmt(f)
     }
+}
+
+#[rustfmt::skip]
+impl ariadne::Span for Span {
+    type SourceId = ();
+    fn source(&self) -> &Self::SourceId { &() }
+    fn start(&self) -> usize { self.start }
+    fn end(&self) -> usize { self.end }
 }
 
 #[derive(Debug)]
@@ -150,7 +161,8 @@ impl<'a> Lexer<'a> {
                 match_case_insensitive!(lexeme,
                     "create" => Kind::Create, "table" => Kind::Table,
                     "select" => Kind::Select, "from" => Kind::From,
-                    "insert" => Kind::Insert, "into" => Kind::Into,
+                    "insert" => Kind::Insert, "into" => Kind::Into, "values" => Kind::Values,
+                    "true" => Kind::True, "false" => Kind::False,
                     _ => Kind::Ident,
                 )
             }

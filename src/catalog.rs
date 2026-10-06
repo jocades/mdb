@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::bytes::{BufRead, BufWrite};
 use crate::heap::{Heap, Rid};
 use crate::storage::{Disk, PageId, Pool};
-use crate::value::{Type, Value};
+use crate::value::{Type, Value, codec};
 
 const CATALOG_ROOT: PageId = 1;
 
@@ -117,7 +117,7 @@ impl Schema {
         Self { columns, by_name }
     }
 
-    fn index_of(&self, col: &str) -> Option<usize> {
+    pub fn index_of(&self, col: &str) -> Option<usize> {
         self.by_name.get(col).copied()
     }
 }
@@ -131,10 +131,9 @@ pub struct Table {
 }
 
 impl Table {
-    pub fn insert(&mut self, pool: &mut Pool<impl Disk>, row: &[Value]) -> Rid {
-        // let bytes = encode(&self.schema, row);
-        // self.heap.insert(pool, &bytes).unwrap()
-        todo!()
+    pub fn insert(&mut self, pool: &mut Pool<impl Disk>, tuple: &[Value]) -> Rid {
+        let record = codec::encode(&self.schema, tuple);
+        self.heap.insert(pool, &record).unwrap()
     }
 
     // pub fn get(&self, pool: &mut Pool<impl Disk>, rid: Rid) -> Option<Vec<Value>> {

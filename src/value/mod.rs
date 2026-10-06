@@ -27,4 +27,12 @@ pub enum Value {
     Text(Arc<str>),
 }
 
-impl Value {}
+impl Value {
+    pub fn ty(&self) -> Type {
+        match self {
+            Value::Int(_) => Type::Int,
+            Value::Bool(_) => Type::Bool,
+            Value::Text(_) => Type::Text,
+        }
+    }
+}

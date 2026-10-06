@@ -89,6 +89,7 @@ impl Parser<'_> {
                 self.expect(Kind::LParen)?;
                 let mut columns = vec![];
                 loop {
+                    // if self.matches(Kind::LParen);
                     let name = self.ident()?;
                     let t = self.peek();
                     ensure!(t.kind == Kind::Ident, Error::ExpectedType(t.span));
@@ -101,9 +102,8 @@ impl Parser<'_> {
                     );
                     self.bump();
                     columns.push(ColumnDef { name, ty });
-                    match self.peek().kind {
-                        Kind::Comma => self.bump(),
-                        _ => break,
+                    if !self.matches(Kind::Comma) {
+                        break;
                     }
                 }
                 self.expect(Kind::RParen)?;
@@ -116,7 +116,7 @@ impl Parser<'_> {
 
                 loop {
                     projection.push(self.expr()?);
-                    if self.matches(Kind::Comma) {
+                    if !self.matches(Kind::Comma) {
                         break;
                     }
                 }
@@ -142,11 +142,24 @@ impl Parser<'_> {
             }
 
             Kind::Insert => {
-                todo!()
+                self.bump();
+                self.expect(Kind::Into)?;
+                let into = self.ident()?;
+                self.expect(Kind::Values)?;
+                self.expect(Kind::LParen)?;
+                let mut values = Vec::new();
+                loop {
+                    values.push(self.expr()?);
+                    if !self.matches(Kind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(Kind::RParen)?;
+                Stmt::Insert { into, values }
             }
             _ => {
                 bail!(Error::Expected {
-                    expected: vec![Kind::Create, Kind::Select],
+                    expected: vec![Kind::Create, Kind::Select, Kind::Insert],
                     found: t.kind,
                     span: t.span,
                 });
@@ -212,14 +225,20 @@ impl Parser<'_> {
                 let n = t.lexeme(&self.source).parse().unwrap();
                 Expr::Lit(Lit::Int(n))
             }
+            Kind::True => Expr::Lit(Lit::Bool(true)),
+            Kind::False => Expr::Lit(Lit::Bool(false)),
             Kind::String => {
                 let s = &self.source[t.span.start + 1..t.span.end - 1];
                 Expr::Lit(Lit::String(Arc::from(s)))
             }
             Kind::Ident => {
                 let lexeme = t.lexeme(&self.source);
-                Expr::Ident(Arc::from(lexeme))
+                Expr::Ident(Ident {
+                    lexeme: Arc::from(lexeme),
+                    span: t.span,
+                })
             }
+            Kind::Star => Expr::Wildcard,
             Kind::LParen => {
                 self.bump();
                 let expr = self.expr()?;

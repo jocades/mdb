@@ -14,6 +14,11 @@ pub enum Stmt {
         projection: Vec<Expr>,
         relation: Option<Ident>,
     },
+
+    Insert {
+        into: Ident,
+        values: Vec<Expr>,
+    },
 }
 
 #[derive(Debug)]
@@ -22,7 +27,8 @@ pub struct ColumnDef {
     pub ty: Type,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, derive_more::Display)]
+#[display("{lexeme}")]
 pub struct Ident {
     pub lexeme: Arc<str>,
     pub span: Span,
@@ -31,8 +37,9 @@ pub struct Ident {
 #[derive(Debug)]
 pub enum Expr {
     Lit(Lit),
-    Ident(Arc<str>),
+    Ident(Ident),
     Bin(Box<Expr>, BinOp, Box<Expr>),
+    Wildcard, // *
 }
 
 #[derive(Debug)]

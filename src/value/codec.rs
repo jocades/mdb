@@ -15,7 +15,7 @@ pub fn encode(schema: &Schema, tuple: &[Value]) -> Vec<u8> {
                 buf.write_u16(s.len() as u16);
                 buf.write_slice(s.as_bytes());
             }
-            _ => panic!(),
+            _ => unreachable!("type check failed"),
         }
     }
     buf
@@ -29,7 +29,7 @@ pub fn decode(schema: &Schema, mut buf: &[u8]) -> Vec<Value> {
             Type::Bool => Value::Bool(buf.read_u8() != 0),
             Type::Text => {
                 let len = buf.read_u16() as usize;
-                let s = str::from_utf8(buf.read_slice(len)).unwrap();
+                let s = buf.read_str(len);
                 Value::Text(s.into())
             }
         })

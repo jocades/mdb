@@ -3,8 +3,9 @@ use std::{io, path::Path};
 use crate::catalog::{self, Catalog, Column, Schema, Table};
 use crate::heap::Heap;
 use crate::sql;
-use crate::sql::ast::Ident;
+use crate::sql::ast::{Expr, Ident, Lit};
 use crate::storage::{DEFAULT_POOL_CAPACITY, Disk, FileDisk, MemDisk, Pool};
+use crate::value::{Type, Value, codec};
 
 pub struct Database<D: Disk> {
     pub pool: Pool<D>,
@@ -38,7 +39,22 @@ pub enum Error {
     Io(io::Error),
     #[from]
     Parse(sql::parser::Error),
+
     TableExists(Ident),
+    TableNotFound(Ident),
+    ColumnNotFound {
+        column: Ident,
+        table: Ident,
+    },
+    ArityMismatch {
+        table: Ident,
+        expected: u16,
+        found: u16,
+    },
+    TypeMismatch {
+        expected: Type,
+        found: Type,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -49,6 +65,7 @@ impl<D: Disk> Database<D> {
 
         let stmts = sql::parse(sql)?;
         for stmt in stmts {
+            println!("{stmt:?}");
             match stmt {
                 Stmt::CreateTable { name, columns } => {
                     ensure!(
@@ -81,12 +98,98 @@ impl<D: Disk> Database<D> {
 
                     self.catalog.tables.insert(name.lexeme, table);
                 }
+                Stmt::Insert {
+                    into,
+                    values: exprs,
+                } => {
+                    let Some(table) = self.catalog.tables.get_mut(&into.lexeme) else {
+                        bail!(Error::TableNotFound(into))
+                    };
+
+                    // arity check
+                    ensure!(
+                        exprs.len() == table.schema.columns.len(),
+                        Error::ArityMismatch {
+                            table: into,
+                            expected: table.schema.columns.len() as u16,
+                            found: exprs.len() as u16,
+                        }
+                    );
+
+                    let mut tuple = Vec::with_capacity(exprs.len());
+                    for (expr, col) in exprs.into_iter().zip(&table.schema.columns) {
+                        let value = eval(&expr);
+                        let ty = value.ty();
+                        ensure!(
+                            ty == col.ty,
+                            Error::TypeMismatch {
+                                expected: col.ty,
+                                found: ty,
+                            }
+                        );
+                        tuple.push(value);
+                    }
+
+                    let record = codec::encode(&table.schema, &tuple);
+                    table.heap.insert(&mut self.pool, &record).unwrap();
+                }
                 Stmt::Select {
                     projection,
                     relation,
-                } => todo!(),
+                } => match relation {
+                    None => {}
+                    Some(name) => {
+                        let Some(table) = self.catalog.tables.get(&name.lexeme) else {
+                            bail!(Error::TableNotFound(name));
+                        };
+
+                        for expr in &projection {
+                            match expr {
+                                Expr::Ident(col) => {
+                                    ensure!(
+                                        table.schema.by_name.contains_key(&name.lexeme),
+                                        Error::ColumnNotFound {
+                                            column: col.clone(),
+                                            table: name.clone(),
+                                        }
+                                    )
+                                }
+                                Expr::Wildcard => {}
+                                _ => todo!("{expr:?} not implemented in select"),
+                            }
+                        }
+
+                        let mut result = Vec::new();
+
+                        let mut scan = table.heap.scan();
+                        while let Some((rid, record)) = scan.next(&mut self.pool).unwrap() {
+                            let tuple = codec::decode(&table.schema, record);
+                            result.push((rid, tuple));
+                        }
+
+                        dbg!(result);
+                    }
+                },
             }
         }
         Ok(())
+    }
+}
+
+struct Context<'a, D: Disk> {
+    pool: &'a mut Pool<D>,
+    catalog: &'a Catalog,
+}
+
+fn eval(expr: &Expr) -> Value {
+    match expr {
+        Expr::Lit(lit) => match lit {
+            Lit::Int(n) => Value::Int(*n),
+            Lit::Bool(b) => Value::Bool(*b),
+            Lit::String(s) => Value::Text(s.clone()),
+        },
+        Expr::Ident(_) => todo!(),
+        Expr::Bin(expr, bin_op, expr1) => todo!(),
+        Expr::Wildcard => todo!(),
     }
 }
