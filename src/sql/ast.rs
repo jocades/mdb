@@ -1,21 +1,31 @@
-#![allow(unused)]
 use std::sync::Arc;
+
+use crate::value::Type;
+
+use super::lexer::Span;
 
 #[derive(Debug)]
 pub enum Stmt {
-    Create(Create),
+    CreateTable {
+        name: Ident,
+        columns: Vec<ColumnDef>,
+    },
     Select {
         projection: Vec<Expr>,
-        relation: Option<Arc<str>>,
+        relation: Option<Ident>,
     },
 }
 
 #[derive(Debug)]
-pub enum Create {
-    Table {
-        name: Arc<str>,
-        columns: Vec<Column>,
-    },
+pub struct ColumnDef {
+    pub name: Ident,
+    pub ty: Type,
+}
+
+#[derive(Debug, Clone)]
+pub struct Ident {
+    pub lexeme: Arc<str>,
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -40,17 +50,4 @@ pub enum BinOp {
     Lt, Le,
     Add, Sub,
     Mul, Div,
-}
-
-#[derive(Debug)]
-pub enum Type {
-    Integer,
-    Boolean,
-    String,
-}
-
-#[derive(Debug)]
-pub struct Column {
-    pub name: Arc<str>,
-    pub ty: Type,
 }

@@ -1,4 +1,4 @@
+mod heap;
 mod page;
-mod table;
 
-pub use table::{HeapTable, Rid};
+pub use heap::{Heap, Rid};

@@ -1,67 +1,39 @@
 #[macro_use]
 mod macros;
 mod bytes;
+mod catalog;
 mod database;
 mod heap;
+mod repl;
 mod sql;
 mod storage;
+mod value;
 
-fn main() {}
+use database::Database;
+use repl::Repl;
+use storage::Disk;
 
-fn run(source: &str) {
-    match sql::parse(&source) {
-        Ok(stmts) => println!("{stmts:?}"),
-        Err(e) => eprintln!("error: {e:?}"),
+fn run<D: Disk>(mut db: Database<D>) {
+    dbg!(&db.catalog);
+
+    for source in Repl::new() {
+        if let Err(e) = db.execute(&source) {
+            println!("error: {e:?}");
+        }
     }
 }
 
-// fn repl() {
-//     use std::io::{self, BufRead};
-//     let stdin = io::stdin().lock();
-//     for line in stdin.lines() {
-//         run(&line.unwrap());
-//     }
-// }
-
-fn repl() {
-    use rustyline::DefaultEditor;
-    use rustyline::error::ReadlineError;
-
-    const HIST_FILE: &str = "history.txt";
-
-    let mut rl = DefaultEditor::new().unwrap();
-    _ = rl.load_history(HIST_FILE);
-
-    let mut buf = String::new();
-
-    loop {
-        let prompt = if buf.is_empty() { "sql> " } else { "...> " };
-
-        match rl.readline(prompt) {
-            Ok(line) => {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-
-                buf.push_str(&line);
-
-                if trimmed.ends_with(";") {
-                    _ = rl.add_history_entry(&line);
-                    run(&buf);
-                    buf.clear();
-                } else {
-                    buf.push('\n');
-                }
-            }
-            Err(ReadlineError::Interrupted) => buf.clear(),
-            Err(ReadlineError::Eof) => break,
-            Err(e) => {
-                eprintln!("error: {e}");
-                break;
-            }
+fn main() {
+    let mut args = std::env::args();
+    match args.len() {
+        1 => run(Database::memory()),
+        2 => {
+            let path = args.nth(1).unwrap();
+            run(Database::open(&path).unwrap())
         }
-    }
-
-    _ = rl.save_history(HIST_FILE);
+        _ => {
+            eprintln!("usage: mbd [PATH]");
+            std::process::exit(1);
+        }
+    };
 }

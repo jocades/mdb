@@ -1,8 +1,9 @@
 #![allow(dead_code)]
 use std::sync::Arc;
 
-use super::ast::{BinOp, Column, Create, Expr, Lit, Stmt, Type};
+use super::ast::{BinOp, ColumnDef, Expr, Ident, Lit, Stmt};
 use super::lexer::{self, Kind, Lexer, Span};
+use crate::value::Type;
 
 #[derive(Debug, derive_more::From)]
 #[allow(dead_code)]
@@ -93,20 +94,20 @@ impl Parser<'_> {
                     ensure!(t.kind == Kind::Ident, Error::ExpectedType(t.span));
                     let lexeme = t.lexeme(self.source);
                     let ty = match_case_insensitive!(lexeme,
-                        "int" => Type::Integer,
-                        "bool" => Type::Boolean,
-                        "string" => Type::String,
+                        "int" => Type::Int,
+                        "bool" => Type::Bool,
+                        "text" => Type::Text,
                         _ => bail!(Error::UnknwonType(t.span)),
                     );
                     self.bump();
-                    columns.push(Column { name, ty });
+                    columns.push(ColumnDef { name, ty });
                     match self.peek().kind {
                         Kind::Comma => self.bump(),
                         _ => break,
                     }
                 }
                 self.expect(Kind::RParen)?;
-                Stmt::Create(Create::Table { name, columns })
+                Stmt::CreateTable { name, columns }
             }
 
             Kind::Select => {
@@ -281,9 +282,12 @@ impl Parser<'_> {
         Ok(self.eat())
     }
 
-    fn ident(&mut self) -> Result<Arc<str>> {
+    fn ident(&mut self) -> Result<Ident> {
         let t = self.expect(Kind::Ident)?;
         let lexeme = t.lexeme(&self.source);
-        Ok(Arc::from(lexeme))
+        Ok(Ident {
+            lexeme: Arc::from(lexeme),
+            span: t.span,
+        })
     }
 }

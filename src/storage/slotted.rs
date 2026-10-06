@@ -209,7 +209,6 @@ impl SlottedPage {
         let reuse = (0..self.len()).find(|&i| self.slot(i).off == 0);
         let need = data.len() + if reuse.is_some() { 0 } else { SLOT_LEN };
 
-
         if need > self.reclaimable_free() { return None; }
         if need > self.contiguous_free() { self.compact(); }
 

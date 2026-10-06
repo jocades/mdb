@@ -31,13 +31,33 @@ pub enum Error {
     Io(io::Error),
 }
 
-/// A table represented as a chain of pages in no particular order.
-pub struct HeapTable {
+/**
+An unordered collection of variable-length records, stored as a singly
+linked chain of slotted pages.
+
+"Heap" means there is no ordering: an insert goes into whichever page has
+room (currently only the last one), and a record is found again by its
+[`Rid`], not by any key. A full scan walks the chain from `first`.
+
+The heap stores opaque bytes. It knows nothing about columns, types or
+schemas: that meaning comes from the layer above (a table decodes records
+with its schema). The same structure backs user tables and the catalog,
+and could back anything else that is "a bag of records".
+
+A `Heap` is just two page ids. It owns no pages and holds no reference to
+the pool, which is passed into each call. `first` is the heap's permanent
+identity (it is what the catalog stores) and is never freed while the heap
+exists, even if it becomes empty.
+
+Records larger than one page are not supported yet.
+*/
+#[derive(Debug)]
+pub struct Heap {
     first: PageId,
     last: PageId,
 }
 
-impl HeapTable {
+impl Heap {
     /// New empty table
     pub fn create(pool: &mut Pool<impl Disk>) -> io::Result<Self> {
         let id = alloc_page_and_init(pool)?;
@@ -62,6 +82,10 @@ impl HeapTable {
         })
     }
 
+    pub fn first(&self) -> PageId {
+        self.first
+    }
+
     pub fn get<'a>(&self, pool: &'a mut Pool<impl Disk>, rid: Rid) -> io::Result<Option<&'a [u8]>> {
         Ok(pool.get::<HeapPage>(rid.page)?.get(rid.slot))
     }
@@ -70,17 +94,17 @@ impl HeapTable {
         HeapScan(Rid::new(self.first, 0))
     }
 
-    pub fn insert(&mut self, pool: &mut Pool<impl Disk>, row: &[u8]) -> Result<Rid, Error> {
+    pub fn insert(&mut self, pool: &mut Pool<impl Disk>, record: &[u8]) -> Result<Rid, Error> {
         const MAX_ROW: usize = 100;
 
-        if row.len() > MAX_ROW {
+        if record.len() > MAX_ROW {
             bail!(Error::RowTooLarge {
-                len: row.len(),
+                len: record.len(),
                 max: MAX_ROW
             })
         }
 
-        if let Some(slot) = try_insert(pool, self.last, row)? {
+        if let Some(slot) = try_insert(pool, self.last, record)? {
             return Ok(Rid::new(self.last, slot));
         }
 
@@ -91,16 +115,21 @@ impl HeapTable {
         self.last = new;
 
         // can't fail: row <= MAX_ROW
-        let slot = try_insert(pool, new, row)?.ok_or(Corrupt)?;
+        let slot = try_insert(pool, new, record)?.ok_or(Corrupt)?;
         Ok(Rid::new(new, slot))
+    }
+
+    pub fn delete(&mut self, pool: &mut Pool<impl Disk>, rid: Rid) -> Result<(), io::Error> {
+        pool.get_mut::<HeapPage>(rid.page)?.delete(rid.slot);
+        Ok(())
     }
 }
 
-fn try_insert(pool: &mut Pool<impl Disk>, id: PageId, row: &[u8]) -> io::Result<Option<SlotId>> {
-    if !pool.get::<HeapPage>(id)?.can_insert(row.len()) {
+fn try_insert(pool: &mut Pool<impl Disk>, id: PageId, record: &[u8]) -> io::Result<Option<SlotId>> {
+    if !pool.get::<HeapPage>(id)?.can_insert(record.len()) {
         return Ok(None);
     }
-    Ok(pool.get_mut::<HeapPage>(id)?.insert(row))
+    Ok(pool.get_mut::<HeapPage>(id)?.insert(record))
 }
 
 fn alloc_page_and_init(pool: &mut Pool<impl Disk>) -> io::Result<PageId> {

@@ -131,6 +131,7 @@ impl<D: Disk> Pool<D> {
             let id = self.header.free_head;
             let i = self.fetch(id)?;
             let frame = &mut self.frames[i];
+            assert!(frame.buf[0] == page_kind::FREE, "corrupt freelist");
             self.header.free_head = frame.buf.get_u32(4);
             frame.buf.fill(0);
             frame.dirty = true;
@@ -145,10 +146,10 @@ impl<D: Disk> Pool<D> {
     }
 
     pub fn free(&mut self, id: PageId) -> io::Result<()> {
-        assert!(id < self.disk.len());
+        assert!(id != 0 && id < self.disk.len());
         let i = self.fetch(id)?;
         let frame = &mut self.frames[i];
-        assert!(frame.buf.get_u8(0) != page_kind::FREE, "double free");
+        assert!(frame.buf[0] != page_kind::FREE, "double free");
         frame.buf.fill(0);
         frame.buf.put_u8(0, page_kind::FREE);
         frame.buf.put_u32(4, self.header.free_head);
@@ -166,6 +167,10 @@ impl<D: Disk> Pool<D> {
         }
         self.disk.write(0, &self.header.encode())?;
         self.disk.sync()
+    }
+
+    pub fn len(&self) -> u32 {
+        self.disk.len()
     }
 }
 

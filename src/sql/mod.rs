@@ -1,5 +1,5 @@
-mod ast;
-mod lexer;
-mod parser;
+pub mod ast;
+pub mod lexer;
+pub mod parser;
 
 pub use parser::parse;
