@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{io, path::Path};
 
 use crate::catalog::{self, Catalog, Column, Schema, Table};
@@ -39,7 +40,8 @@ pub enum Error {
     Io(io::Error),
     #[from]
     Parse(sql::parser::Error),
-
+    #[from]
+    Catalog(catalog::Error),
     TableExists(Ident),
     TableNotFound(Ident),
     ColumnNotFound {
@@ -51,7 +53,8 @@ pub enum Error {
         expected: u16,
         found: u16,
     },
-    TypeMismatch {
+    ColumnTypeMismatch {
+        column: Arc<str>,
         expected: Type,
         found: Type,
     },
@@ -64,45 +67,19 @@ impl<D: Disk> Database<D> {
         use sql::ast::Stmt;
 
         let stmts = sql::parse(sql)?;
+
         for stmt in stmts {
             println!("{stmt:?}");
             match stmt {
                 Stmt::CreateTable { name, columns } => {
-                    ensure!(
-                        !self.catalog.tables.contains_key(&name.lexeme),
-                        Error::TableExists(name)
-                    );
-
-                    let heap = Heap::create(&mut self.pool).unwrap();
-                    let schema = Schema::new(
-                        columns
-                            .into_iter()
-                            .map(|col| Column::new(col.name.lexeme, col.ty))
-                            .collect(),
-                    );
-
-                    let catalog_record =
-                        catalog::encode(&name.lexeme, heap.first(), &schema.columns);
-
-                    let catalog_rid = self
-                        .catalog
-                        .heap
-                        .insert(&mut self.pool, &catalog_record)
-                        .unwrap();
-
-                    let table = Table {
-                        schema,
-                        heap,
-                        catalog_rid,
-                    };
-
-                    self.catalog.tables.insert(name.lexeme, table);
+                    self.catalog.create_table(&mut self.pool, name, columns)?;
                 }
+                Stmt::DropTable { name } => self.catalog.drop_table(&mut self.pool, name)?,
                 Stmt::Insert {
                     into,
                     values: exprs,
                 } => {
-                    let Some(table) = self.catalog.tables.get_mut(&into.lexeme) else {
+                    let Some(table) = self.catalog.get_mut(&into.lexeme) else {
                         bail!(Error::TableNotFound(into))
                     };
 
@@ -122,7 +99,8 @@ impl<D: Disk> Database<D> {
                         let ty = value.ty();
                         ensure!(
                             ty == col.ty,
-                            Error::TypeMismatch {
+                            Error::ColumnTypeMismatch {
+                                column: col.name.clone(),
                                 expected: col.ty,
                                 found: ty,
                             }
@@ -130,14 +108,20 @@ impl<D: Disk> Database<D> {
                         tuple.push(value);
                     }
 
-                    let record = codec::encode(&table.schema, &tuple);
-                    table.heap.insert(&mut self.pool, &record).unwrap();
+                    table.insert(&mut self.pool, &tuple).unwrap();
                 }
                 Stmt::Select {
                     projection,
                     relation,
                 } => match relation {
-                    None => {}
+                    None => {
+                        let mut result = Vec::with_capacity(projection.len());
+                        for expr in &projection {
+                            let value = eval(expr);
+                            result.push(value);
+                        }
+                        dbg!(result);
+                    }
                     Some(name) => {
                         let Some(table) = self.catalog.tables.get(&name.lexeme) else {
                             bail!(Error::TableNotFound(name));
@@ -147,7 +131,7 @@ impl<D: Disk> Database<D> {
                             match expr {
                                 Expr::Ident(col) => {
                                     ensure!(
-                                        table.schema.by_name.contains_key(&name.lexeme),
+                                        table.schema.by_name.contains_key(&col.lexeme),
                                         Error::ColumnNotFound {
                                             column: col.clone(),
                                             table: name.clone(),
@@ -176,20 +160,46 @@ impl<D: Disk> Database<D> {
     }
 }
 
+// enum EvalError {
+//     InvalidOperands {
+//         lhs: Type,
+//         rhs: Type,
+//     }
+// }
+
+fn eval(expr: &Expr) -> Value {
+    use crate::sql::ast::BinOp;
+    match expr {
+        Expr::Lit(lit) => lit.into(),
+        Expr::Ident(_) => todo!(),
+        Expr::Bin(lhs, op, rhs) => {
+            let lhs = eval(lhs);
+            let rhs = eval(rhs);
+            match op {
+                BinOp::Add => match (lhs, rhs) {
+                    (Value::Int(x), Value::Int(y)) => Value::Int(x + y),
+                    _ => panic!("invalid operands"),
+                },
+                BinOp::Sub => match (lhs, rhs) {
+                    (Value::Int(x), Value::Int(y)) => Value::Int(x - y),
+                    _ => panic!("invalid operands"),
+                },
+                BinOp::Mul => todo!(),
+                BinOp::Div => todo!(),
+
+                BinOp::Eq => todo!(),
+                BinOp::Ne => todo!(),
+                BinOp::Gt => todo!(),
+                BinOp::Ge => todo!(),
+                BinOp::Lt => todo!(),
+                BinOp::Le => todo!(),
+            }
+        }
+        Expr::Wildcard => todo!(),
+    }
+}
+
 struct Context<'a, D: Disk> {
     pool: &'a mut Pool<D>,
     catalog: &'a Catalog,
-}
-
-fn eval(expr: &Expr) -> Value {
-    match expr {
-        Expr::Lit(lit) => match lit {
-            Lit::Int(n) => Value::Int(*n),
-            Lit::Bool(b) => Value::Bool(*b),
-            Lit::String(s) => Value::Text(s.clone()),
-        },
-        Expr::Ident(_) => todo!(),
-        Expr::Bin(expr, bin_op, expr1) => todo!(),
-        Expr::Wildcard => todo!(),
-    }
 }

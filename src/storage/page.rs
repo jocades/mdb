@@ -19,7 +19,7 @@ impl From<Corrupt> for std::io::Error {
 }
 
 pub mod page_kind {
-    pub const UNINIT: u8 = 0; // zeroed page, never formatted
+    pub const _UNINIT: u8 = 0; // zeroed page, never formatted
     pub const FREE: u8 = 1; // on the free list
     pub const HEAP: u8 = 2; // slotted page holding table rows
     // pub const OVERFLOW: u8 = 3;

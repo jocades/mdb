@@ -72,7 +72,9 @@ impl Parser<'_> {
         let mut stmts = Vec::new();
 
         while !self.is_eof() {
-            stmts.push(self.stmt()?);
+            let stmt = self.stmt()?;
+            self.expect(Kind::Semi)?;
+            stmts.push(stmt);
         }
 
         Ok(stmts)
@@ -80,94 +82,104 @@ impl Parser<'_> {
 
     fn stmt(&mut self) -> Result<Stmt> {
         let t = self.peek();
-        let stmt = match t.kind {
+        match t.kind {
             Kind::Create => {
                 self.bump();
-                self.expect(Kind::Table)?;
-                let name = self.ident()?;
-
-                self.expect(Kind::LParen)?;
-                let mut columns = vec![];
-                loop {
-                    // if self.matches(Kind::LParen);
-                    let name = self.ident()?;
-                    let t = self.peek();
-                    ensure!(t.kind == Kind::Ident, Error::ExpectedType(t.span));
-                    let lexeme = t.lexeme(self.source);
-                    let ty = match_case_insensitive!(lexeme,
-                        "int" => Type::Int,
-                        "bool" => Type::Bool,
-                        "text" => Type::Text,
-                        _ => bail!(Error::UnknwonType(t.span)),
-                    );
-                    self.bump();
-                    columns.push(ColumnDef { name, ty });
-                    if !self.matches(Kind::Comma) {
-                        break;
-                    }
-                }
-                self.expect(Kind::RParen)?;
-                Stmt::CreateTable { name, columns }
+                self.create()
             }
-
-            Kind::Select => {
+            Kind::Drop => {
                 self.bump();
-                let mut projection = Vec::new();
-
-                loop {
-                    projection.push(self.expr()?);
-                    if !self.matches(Kind::Comma) {
-                        break;
-                    }
-                }
-
-                let t = self.peek();
-                let relation = match t.kind {
-                    Kind::From => {
-                        self.bump();
-                        Some(self.ident()?)
-                    }
-                    Kind::Semi => None,
-                    _ => bail!(Error::Expected {
-                        expected: vec![Kind::From, Kind::Semi],
-                        found: t.kind,
-                        span: t.span,
-                    }),
-                };
-
-                Stmt::Select {
-                    projection,
-                    relation,
-                }
+                self.drop()
             }
-
             Kind::Insert => {
                 self.bump();
-                self.expect(Kind::Into)?;
-                let into = self.ident()?;
-                self.expect(Kind::Values)?;
-                self.expect(Kind::LParen)?;
-                let mut values = Vec::new();
-                loop {
-                    values.push(self.expr()?);
-                    if !self.matches(Kind::Comma) {
-                        break;
-                    }
-                }
-                self.expect(Kind::RParen)?;
-                Stmt::Insert { into, values }
+                self.insert()
+            }
+            Kind::Select => {
+                self.bump();
+                self.select()
             }
             _ => {
                 bail!(Error::Expected {
-                    expected: vec![Kind::Create, Kind::Select, Kind::Insert],
+                    expected: vec![Kind::Create, Kind::Drop, Kind::Insert, Kind::Select],
                     found: t.kind,
                     span: t.span,
                 });
             }
-        };
+        }
+    }
 
-        self.expect(Kind::Semi)?;
-        Ok(stmt)
+    fn create(&mut self) -> Result<Stmt> {
+        self.expect(Kind::Table)?;
+        let name = self.ident()?;
+        self.expect(Kind::LParen)?;
+        let mut columns = vec![];
+        loop {
+            let name = self.ident()?;
+            let t = self.peek();
+            ensure!(t.kind == Kind::Ident, Error::ExpectedType(t.span));
+            let lexeme = t.lexeme(self.source);
+            let ty = match_case_insensitive!(lexeme,
+                "int" => Type::Int,
+                "bool" => Type::Bool,
+                "text" => Type::Text,
+                _ => bail!(Error::UnknwonType(t.span)),
+            );
+            self.bump();
+            columns.push(ColumnDef { name, ty });
+            if !self.matches(Kind::Comma) {
+                break;
+            }
+        }
+        self.expect(Kind::RParen)?;
+        Ok(Stmt::CreateTable { name, columns })
+    }
+
+    fn drop(&mut self) -> Result<Stmt> {
+        self.expect(Kind::Table)?;
+        let name = self.ident()?;
+        Ok(Stmt::DropTable { name })
+    }
+
+    fn insert(&mut self) -> Result<Stmt> {
+        self.expect(Kind::Into)?;
+        let into = self.ident()?;
+        self.expect(Kind::Values)?;
+        self.expect(Kind::LParen)?;
+        let values = self.expr_list()?;
+        self.expect(Kind::RParen)?;
+        Ok(Stmt::Insert { into, values })
+    }
+
+    fn select(&mut self) -> Result<Stmt> {
+        let projection = self.expr_list()?;
+        let t = self.peek();
+        let relation = match t.kind {
+            Kind::From => {
+                self.bump();
+                Some(self.ident()?)
+            }
+            Kind::Semi => None,
+            _ => bail!(Error::Expected {
+                expected: vec![Kind::From, Kind::Semi],
+                found: t.kind,
+                span: t.span,
+            }),
+        };
+        Ok(Stmt::Select {
+            projection,
+            relation,
+        })
+    }
+
+    #[rustfmt::skip]
+    fn expr_list(&mut self) -> Result<Vec<Expr>> {
+        let mut exprs = Vec::new();
+        loop {
+            exprs.push(self.expr()?);
+            if !self.matches(Kind::Comma) { break; }
+        }
+        Ok(exprs)
     }
 
     fn expr(&mut self) -> Result<Expr> {

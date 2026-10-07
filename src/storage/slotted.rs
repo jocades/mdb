@@ -29,7 +29,8 @@ All integers are big-endian.
 +--------+------------------+----------------+-----------------+
 | header | slot array  ->   |   free space   |  <-  records    |
 +--------+------------------+----------------+-----------------+
-0        20                                   free_end      len
+^        ^                                   ^
+0        20                                 free_end
 ```
 
 # Invariants
@@ -166,7 +167,7 @@ impl SlottedPage {
         self.buf.put_u32(NEXT, id)
     }
 
-    /// Gap between the slot array and the content
+    /// Gap between the slot array and the records
     fn contiguous_free(&self) -> usize {
         let slots_end = HDR_LEN + self.len() as usize * SLOT_LEN;
         debug_assert!(slots_end <= self.free_end(), "slot array overlaps content");

@@ -10,14 +10,16 @@ pub enum Stmt {
         name: Ident,
         columns: Vec<ColumnDef>,
     },
-    Select {
-        projection: Vec<Expr>,
-        relation: Option<Ident>,
+    DropTable {
+        name: Ident,
     },
-
     Insert {
         into: Ident,
         values: Vec<Expr>,
+    },
+    Select {
+        projection: Vec<Expr>,
+        relation: Option<Ident>,
     },
 }
 

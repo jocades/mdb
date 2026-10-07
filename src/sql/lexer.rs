@@ -18,11 +18,21 @@ pub enum Kind {
     LParen, RParen,
 
 
-    Create, Table,
+    Create, Drop, Table,
     Select, From,
     Insert, Into, Values,
 
     True, False,
+}
+
+fn lookup_ident(lexeme: &str) -> Kind {
+    match_case_insensitive!(lexeme,
+        "create" => Kind::Create, "drop" => Kind::Drop, "table" => Kind::Table,
+        "select" => Kind::Select, "from" => Kind::From,
+        "insert" => Kind::Insert, "into" => Kind::Into, "values" => Kind::Values,
+        "true" => Kind::True, "false" => Kind::False,
+        _ => Kind::Ident,
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -158,13 +168,7 @@ impl<'a> Lexer<'a> {
             c if c.is_ascii_alphabetic() || c == b'_' => {
                 self.seek(|c| c.is_ascii_alphanumeric() || c == b'_');
                 let lexeme = self.lexeme();
-                match_case_insensitive!(lexeme,
-                    "create" => Kind::Create, "table" => Kind::Table,
-                    "select" => Kind::Select, "from" => Kind::From,
-                    "insert" => Kind::Insert, "into" => Kind::Into, "values" => Kind::Values,
-                    "true" => Kind::True, "false" => Kind::False,
-                    _ => Kind::Ident,
-                )
+                lookup_ident(lexeme)
             }
 
             c if c.is_ascii_digit() => {

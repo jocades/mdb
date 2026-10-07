@@ -1,6 +1,6 @@
-use std::sync::Arc;
-
 pub mod codec;
+
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -11,8 +11,21 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn from_u8(tag: u8) -> Self {
-        assert!(tag >= Type::Int as u8 && tag <= Type::Text as u8);
+    pub fn tag(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_tag(tag: u8) -> Option<Self> {
+        Some(match tag {
+            1 => Type::Int,
+            2 => Type::Bool,
+            3 => Type::Text,
+            _ => return None,
+        })
+    }
+
+    pub fn from_tag_unchecked(tag: u8) -> Self {
+        debug_assert!(tag >= Type::Int as u8 && tag <= Type::Text as u8);
         unsafe { std::mem::transmute(tag) }
     }
 }
@@ -33,6 +46,18 @@ impl Value {
             Value::Int(_) => Type::Int,
             Value::Bool(_) => Type::Bool,
             Value::Text(_) => Type::Text,
+        }
+    }
+}
+
+use crate::sql::ast::Lit;
+
+impl From<&Lit> for Value {
+    fn from(lit: &Lit) -> Self {
+        match lit {
+            Lit::Int(n) => Value::Int(*n),
+            Lit::Bool(b) => Value::Bool(*b),
+            Lit::String(s) => Value::Text(s.clone()),
         }
     }
 }

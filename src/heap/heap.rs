@@ -67,6 +67,12 @@ impl Heap {
         })
     }
 
+    /// New empty table from an already allocated page, caller guarantees the page is valid
+    // pub fn init(first: PageId) -> Self {
+    //     HeapPage::init(first);
+    //     Self { first, last: first }
+    // }
+
     /// Open an existing table by walking the chain once to find the last page.
     #[rustfmt::skip]
     pub fn open(pool: &mut Pool<impl Disk>, first: PageId) -> io::Result<Self> {
@@ -123,6 +129,17 @@ impl Heap {
         pool.get_mut::<HeapPage>(rid.page)?.delete(rid.slot);
         Ok(())
     }
+
+    /// Return every page to the free list
+    pub fn destroy(&mut self, pool: &mut Pool<impl Disk>) -> io::Result<()> {
+        let mut current = self.first;
+        while current != 0 {
+            let next = pool.get::<HeapPage>(current)?.next();
+            pool.free(current)?;
+            current = next;
+        }
+        Ok(())
+    }
 }
 
 fn try_insert(pool: &mut Pool<impl Disk>, id: PageId, record: &[u8]) -> io::Result<Option<SlotId>> {
@@ -132,7 +149,7 @@ fn try_insert(pool: &mut Pool<impl Disk>, id: PageId, record: &[u8]) -> io::Resu
     Ok(pool.get_mut::<HeapPage>(id)?.insert(record))
 }
 
-fn alloc_page_and_init(pool: &mut Pool<impl Disk>) -> io::Result<PageId> {
+pub fn alloc_page_and_init(pool: &mut Pool<impl Disk>) -> io::Result<PageId> {
     let id = pool.alloc()?;
     HeapPage::init(pool.writer(id)?);
     Ok(id)

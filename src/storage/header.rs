@@ -43,7 +43,7 @@ impl Header {
         buf
     }
 
-    pub fn decode(&buf: &PageBuf) -> Result<Self, Corrupt> {
+    pub fn decode(buf: &PageBuf) -> Result<Self, Corrupt> {
         // todo: concrete corrupt errors
         if &buf[..4] != MAGIC
             || buf.get_u32(VERS) != VERSION
