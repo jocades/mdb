@@ -8,18 +8,18 @@ use super::lexer::Span;
 pub enum Stmt {
     CreateTable {
         name: Ident,
-        columns: Vec<ColumnDef>,
+        defs: Vec<ColumnDef>,
     },
     DropTable {
         name: Ident,
     },
     Insert {
         into: Ident,
-        values: Vec<Expr>,
+        vals: Vec<Expr>,
     },
     Select {
-        projection: Vec<Expr>,
-        relation: Option<Ident>,
+        cols: Vec<Expr>,
+        from: Option<Ident>,
     },
 }
 
@@ -54,9 +54,9 @@ pub enum Lit {
 #[derive(Debug, Clone, Copy)]
 #[rustfmt::skip]
 pub enum BinOp {
+    Add, Sub,
+    Mul, Div,
     Eq, Ne,
     Gt, Ge,
     Lt, Le,
-    Add, Sub,
-    Mul, Div,
 }

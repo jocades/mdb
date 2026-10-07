@@ -2,11 +2,13 @@ use std::sync::Arc;
 use std::{io, path::Path};
 
 use crate::catalog::{self, Catalog, Column, Schema, Table};
+use crate::exec::Tuple;
 use crate::heap::Heap;
-use crate::sql;
+use crate::plan::binder;
 use crate::sql::ast::{Expr, Ident, Lit};
 use crate::storage::{DEFAULT_POOL_CAPACITY, Disk, FileDisk, MemDisk, Pool};
 use crate::value::{Type, Value, codec};
+use crate::{exec, sql};
 
 pub struct Database<D: Disk> {
     pub pool: Pool<D>,
@@ -41,7 +43,11 @@ pub enum Error {
     #[from]
     Parse(sql::parser::Error),
     #[from]
+    Bind(binder::Error),
+    #[from]
     Catalog(catalog::Error),
+    #[from]
+    Exec(exec::Error),
     TableExists(Ident),
     TableNotFound(Ident),
     ColumnNotFound {
@@ -62,6 +68,15 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Debug)]
+pub enum QueryResult {
+    Affected(usize),
+    Rows {
+        rows: Vec<Tuple>,
+        schema: Arc<Schema>,
+    },
+}
+
 impl<D: Disk> Database<D> {
     pub fn execute(&mut self, sql: &str) -> Result<()> {
         use sql::ast::Stmt;
@@ -71,30 +86,34 @@ impl<D: Disk> Database<D> {
         for stmt in stmts {
             println!("{stmt:?}");
             match stmt {
-                Stmt::CreateTable { name, columns } => {
-                    self.catalog.create_table(&mut self.pool, name, columns)?;
+                Stmt::CreateTable { name, defs } => {
+                    let (name, schema) = binder::bind_create_table(&self.catalog, &name, &defs)?;
+                    self.catalog.create_table(&mut self.pool, name, schema)?;
                 }
-                Stmt::DropTable { name } => self.catalog.drop_table(&mut self.pool, name)?,
-                Stmt::Insert {
-                    into,
-                    values: exprs,
-                } => {
+                Stmt::DropTable { name } => {
+                    ensure!(
+                        self.catalog.get(&name.lexeme).is_some(),
+                        binder::Error::TableNotFound(name)
+                    );
+                    self.catalog.drop_table(&mut self.pool, &name.lexeme)?;
+                }
+                Stmt::Insert { into, vals } => {
                     let Some(table) = self.catalog.get_mut(&into.lexeme) else {
                         bail!(Error::TableNotFound(into))
                     };
 
                     // arity check
                     ensure!(
-                        exprs.len() == table.schema.columns.len(),
+                        vals.len() == table.schema.columns.len(),
                         Error::ArityMismatch {
                             table: into,
                             expected: table.schema.columns.len() as u16,
-                            found: exprs.len() as u16,
+                            found: vals.len() as u16,
                         }
                     );
 
-                    let mut tuple = Vec::with_capacity(exprs.len());
-                    for (expr, col) in exprs.into_iter().zip(&table.schema.columns) {
+                    let mut tuple = Vec::with_capacity(vals.len());
+                    for (expr, col) in vals.into_iter().zip(&table.schema.columns) {
                         let value = eval(&expr);
                         let ty = value.ty();
                         ensure!(
@@ -110,50 +129,59 @@ impl<D: Disk> Database<D> {
 
                     table.insert(&mut self.pool, &tuple).unwrap();
                 }
-                Stmt::Select {
-                    projection,
-                    relation,
-                } => match relation {
-                    None => {
-                        let mut result = Vec::with_capacity(projection.len());
-                        for expr in &projection {
-                            let value = eval(expr);
-                            result.push(value);
-                        }
-                        dbg!(result);
+                Stmt::Select { cols, from } => {
+                    let plan = binder::bind_select(&self.catalog, &cols, &from)?;
+                    let mut root = exec::build::<D>(&plan, &self.catalog);
+                    let mut rows = Vec::new();
+                    while let Some(tuple) = root.next(&mut self.pool)? {
+                        rows.push(tuple);
                     }
-                    Some(name) => {
-                        let Some(table) = self.catalog.tables.get(&name.lexeme) else {
-                            bail!(Error::TableNotFound(name));
-                        };
-
-                        for expr in &projection {
-                            match expr {
-                                Expr::Ident(col) => {
-                                    ensure!(
-                                        table.schema.by_name.contains_key(&col.lexeme),
-                                        Error::ColumnNotFound {
-                                            column: col.clone(),
-                                            table: name.clone(),
-                                        }
-                                    )
-                                }
-                                Expr::Wildcard => {}
-                                _ => todo!("{expr:?} not implemented in select"),
-                            }
-                        }
-
-                        let mut result = Vec::new();
-
-                        let mut scan = table.heap.scan();
-                        while let Some((rid, record)) = scan.next(&mut self.pool).unwrap() {
-                            let tuple = codec::decode(&table.schema, record);
-                            result.push((rid, tuple));
-                        }
-
-                        dbg!(result);
-                    }
-                },
+                    let result = QueryResult::Rows {
+                        rows,
+                        schema: plan.schema().clone(),
+                    };
+                    dbg!(result);
+                } // } => match relation {
+                  //     None => {
+                  //         let mut result = Vec::with_capacity(cols.len());
+                  //         for expr in &cols {
+                  //             let value = eval(expr);
+                  //             result.push(value);
+                  //         }
+                  //         dbg!(result);
+                  //     }
+                  //     Some(name) => {
+                  //         let Some(table) = self.catalog.tables.get(&name.lexeme) else {
+                  //             bail!(Error::TableNotFound(name));
+                  //         };
+                  //
+                  //         for expr in &cols {
+                  //             match expr {
+                  //                 Expr::Ident(col) => {
+                  //                     ensure!(
+                  //                         table.schema.by_name.contains_key(&col.lexeme),
+                  //                         Error::ColumnNotFound {
+                  //                             column: col.clone(),
+                  //                             table: name.clone(),
+                  //                         }
+                  //                     )
+                  //                 }
+                  //                 Expr::Wildcard => {}
+                  //                 _ => todo!("{expr:?} not implemented in select"),
+                  //             }
+                  //         }
+                  //
+                  //         let mut result = Vec::new();
+                  //
+                  //         let mut scan = table.heap.scan();
+                  //         while let Some((rid, record)) = scan.next(&mut self.pool).unwrap() {
+                  //             let tuple = codec::decode(&table.schema, record);
+                  //             result.push((rid, tuple));
+                  //         }
+                  //
+                  //         dbg!(result);
+                  //     }
+                  // },
             }
         }
         Ok(())

@@ -132,7 +132,10 @@ impl Parser<'_> {
             }
         }
         self.expect(Kind::RParen)?;
-        Ok(Stmt::CreateTable { name, columns })
+        Ok(Stmt::CreateTable {
+            name,
+            defs: columns,
+        })
     }
 
     fn drop(&mut self) -> Result<Stmt> {
@@ -148,7 +151,7 @@ impl Parser<'_> {
         self.expect(Kind::LParen)?;
         let values = self.expr_list()?;
         self.expect(Kind::RParen)?;
-        Ok(Stmt::Insert { into, values })
+        Ok(Stmt::Insert { into, vals: values })
     }
 
     fn select(&mut self) -> Result<Stmt> {
@@ -167,8 +170,8 @@ impl Parser<'_> {
             }),
         };
         Ok(Stmt::Select {
-            projection,
-            relation,
+            cols: projection,
+            from: relation,
         })
     }
 

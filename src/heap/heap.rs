@@ -130,8 +130,9 @@ impl Heap {
         Ok(())
     }
 
-    /// Return every page to the free list
-    pub fn destroy(&mut self, pool: &mut Pool<impl Disk>) -> io::Result<()> {
+    /// Return every page to the free list.
+    /// Takes ownership of `self` so that it cannot be used afterwards
+    pub fn destroy(self, pool: &mut Pool<impl Disk>) -> io::Result<()> {
         let mut current = self.first;
         while current != 0 {
             let next = pool.get::<HeapPage>(current)?.next();

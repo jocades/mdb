@@ -1,4 +1,4 @@
 mod heap;
 mod page;
 
-pub use heap::{Error, Heap, Rid};
+pub use heap::{Error, Heap, HeapScan, Rid};

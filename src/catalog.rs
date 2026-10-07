@@ -2,7 +2,6 @@ use std::{collections::HashMap, io, sync::Arc};
 
 use crate::bytes::{BufRead, BufWrite};
 use crate::heap::{self, Heap, Rid};
-use crate::sql::ast::{ColumnDef, Ident};
 use crate::storage::{Disk, PageId, Pool};
 use crate::value::{Type, Value, codec};
 
@@ -21,9 +20,6 @@ pub enum Error {
     Io(io::Error),
     #[from]
     Heap(heap::Error),
-    TableExists(Ident),
-    DuplicateColumn,
-    TableNotFound(Ident),
 }
 
 impl Catalog {
@@ -46,11 +42,12 @@ impl Catalog {
         while let Some((rid, record)) = scan.next(pool)? {
             let (name, first_page, columns) = decode(record);
             let table = Table {
+                name: name.clone(),
                 heap: Heap::open(pool, first_page)?,
-                schema: Schema::new(columns),
+                schema: Arc::new(Schema::new(columns)),
                 catalog_rid: rid,
             };
-            tables.insert(name.into(), table);
+            tables.insert(name, table);
         }
 
         Ok(Self { heap, tables })
@@ -59,29 +56,14 @@ impl Catalog {
     pub fn create_table(
         &mut self,
         pool: &mut Pool<impl Disk>,
-        name: Ident,
-        def: Vec<ColumnDef>,
+        name: Arc<str>,
+        schema: Schema,
     ) -> Result<(), Error> {
-        ensure!(
-            !self.tables.contains_key(&name.lexeme),
-            Error::TableExists(name)
-        );
+        debug_assert!(!self.tables.contains_key(&name));
 
-        let mut columns = Vec::new();
-        let mut by_name = HashMap::new();
-        for (idx, col) in def.into_iter().enumerate() {
-            columns.push(Column::new(col.name.lexeme.clone(), col.ty));
-            if let Some(_existing) = by_name.insert(col.name.lexeme, idx) {
-                bail!(Error::DuplicateColumn)
-            }
-        }
-
-        // todo: insert into catalog heap before
         let heap = Heap::create(pool)?;
-        let schema = Schema { columns, by_name };
-
         let first_page = pool.alloc()?;
-        let catalog_record = encode(&name.lexeme, first_page, &schema.columns);
+        let catalog_record = encode(&name, first_page, &schema.columns);
         let catalog_rid = self.heap.insert(pool, &catalog_record)?;
 
         // let catalog_rid = match self.heap.insert(pool, &catalog_record) {
@@ -93,30 +75,36 @@ impl Catalog {
         // };
 
         let table = Table {
+            name: name.clone(),
             heap,
-            schema,
+            schema: Arc::new(schema),
             catalog_rid,
         };
 
-        self.tables.insert(name.lexeme, table);
+        self.tables.insert(name, table);
         Ok(())
     }
 
-    pub fn drop_table(&mut self, pool: &mut Pool<impl Disk>, name: Ident) -> Result<(), Error> {
-        let Some(table) = self.tables.get_mut(&name.lexeme) else {
-            bail!(Error::TableNotFound(name))
-        };
+    // caller must gurantee table exists
+    pub fn drop_table(&mut self, pool: &mut Pool<impl Disk>, name: &str) -> Result<(), Error> {
         // delete the catalog record before freeing the pages.
         // if we crash in between, we leak pages, the reverse order would
         // leave the catalog pointing to freed pages, which is corruption,
         // a leak is the safer failure
-        self.heap.delete(pool, table.catalog_rid)?;
-        table.heap.destroy(pool)?;
-        self.tables.remove(&name.lexeme);
+        let table = self.tables.remove(name).expect("caller checked existence");
+
+        if let Err(e) = self.heap.delete(pool, table.catalog_rid) {
+            // on failure put the table back; this way memory always
+            // matches what a restart would produce
+            self.tables.insert(name.into(), table);
+            bail!(e)
+        }
+
+        table.heap.destroy(pool)?; // if this fails we leak pages but memory matches disk
         Ok(())
     }
 
-    pub fn get(&mut self, name: &str) -> Option<&Table> {
+    pub fn get(&self, name: &str) -> Option<&Table> {
         self.tables.get(name)
     }
 
@@ -143,15 +131,15 @@ pub fn encode(name: &str, first_page: PageId, columns: &[Column]) -> Vec<u8> {
 }
 
 /// Decode a catalog record
-pub fn decode(mut buf: &[u8]) -> (String, PageId, Vec<Column>) {
+pub fn decode(mut buf: &[u8]) -> (Arc<str>, PageId, Vec<Column>) {
     let name_len = buf.read_u16() as usize;
-    let name = buf.read_str(name_len).to_owned();
+    let name: Arc<str> = buf.read_str(name_len).into();
     let first_page = buf.read_u32();
     let cols_len = buf.read_u16() as usize;
     let mut columns = Vec::with_capacity(cols_len);
     for _ in 0..cols_len {
         let name_len = buf.read_u16() as usize;
-        let name = buf.read_str(name_len).to_owned();
+        let name: Arc<str> = buf.read_str(name_len).into();
         let ty = Type::from_tag(buf.read_u8()).unwrap();
         columns.push(Column::new(name, ty))
     }
@@ -180,6 +168,7 @@ pub struct Schema {
 }
 
 impl Schema {
+    /// Caller must gurantee there are no repeated columns
     pub fn new(columns: Vec<Column>) -> Self {
         let by_name = columns
             .iter()
@@ -190,6 +179,13 @@ impl Schema {
         Self { columns, by_name }
     }
 
+    pub fn empty() -> Self {
+        Self {
+            columns: Vec::new(),
+            by_name: HashMap::new(),
+        }
+    }
+
     pub fn index_of(&self, col: &str) -> Option<usize> {
         self.by_name.get(col).copied()
     }
@@ -197,8 +193,9 @@ impl Schema {
 
 #[derive(Debug)]
 pub struct Table {
+    pub name: Arc<str>,
     pub heap: Heap,
-    pub schema: Schema,
+    pub schema: Arc<Schema>,
     // /// Where this table's description lives in the catalog heap
     pub catalog_rid: Rid,
 }
