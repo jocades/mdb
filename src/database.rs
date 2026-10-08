@@ -1,15 +1,13 @@
 use std::sync::Arc;
 use std::{io, path::Path};
 
-use crate::catalog::{self, Catalog, Column, Schema, Table};
+use crate::catalog::{self, Catalog, Schema};
 use crate::exec::Tuple;
 use crate::exec::{self, Context};
-use crate::heap::Heap;
 use crate::plan::{Plan, binder};
-use crate::sql;
-use crate::sql::ast::{Expr, Ident, Lit};
+use crate::sql::{self, ast::Stmt};
 use crate::storage::{DEFAULT_POOL_CAPACITY, Disk, FileDisk, MemDisk, Pool};
-use crate::value::{Type, Value, codec};
+use crate::value::Value;
 
 pub struct Database<D: Disk> {
     pub pool: Pool<D>,
@@ -49,23 +47,13 @@ pub enum Error {
     Catalog(catalog::Error),
     #[from]
     Exec(exec::Error),
-    TableExists(Ident),
-    TableNotFound(Ident),
-    ColumnNotFound {
-        column: Ident,
-        table: Ident,
-    },
-    ColumnTypeMismatch {
-        column: Arc<str>,
-        expected: Type,
-        found: Type,
-    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum QueryResult {
+    None,
     Affected(usize),
     Rows {
         rows: Vec<Tuple>,
@@ -74,52 +62,42 @@ pub enum QueryResult {
 }
 
 impl<D: Disk> Database<D> {
-    pub fn execute(&mut self, sql: &str) -> Result<()> {
-        use sql::ast::Stmt;
+    pub fn execute(&mut self, sql: &str) -> Result<QueryResult> {
+        let stmt = sql::parse_one(sql)?;
+        self.execute_stmt(stmt)
+    }
 
-        let stmts = sql::parse(sql)?;
+    pub fn execute_batch(&mut self, sql: &str) -> Result<Vec<QueryResult>> {
+        sql::parse(sql)?
+            .into_iter()
+            .map(|stmt| self.execute_stmt(stmt))
+            .collect()
+    }
 
-        for stmt in stmts {
-            println!("{stmt:?}");
-            match stmt {
-                Stmt::CreateTable { name, defs } => {
-                    let (name, schema) = binder::bind_create_table(&self.cata, &name, &defs)?;
-                    self.cata.create_table(&mut self.pool, name, schema)?;
-                }
-                Stmt::DropTable { name } => {
-                    ensure!(
-                        self.cata.get(&name.lexeme).is_some(),
-                        binder::Error::TableNotFound(name)
-                    );
-                    self.cata.drop_table(&mut self.pool, &name.lexeme)?;
-                }
-                Stmt::Insert(insert) => {
-                    let plan = binder::bind_insert(&self.cata, &insert)?;
-                    let result = self.run(&plan)?;
-                    dbg!(result);
-                }
-                Stmt::Select(select) => {
-                    let plan = binder::bind_select(&self.cata, &select)?;
-                    let result = self.run(&plan)?;
-                    dbg!(&result);
-                    match result {
-                        QueryResult::Rows { rows, schema } => {
-                            if rows.len() != 0 {
-                                let mut b = tabled::builder::Builder::new();
-                                b.push_record(schema.columns.iter().map(|col| col.name.as_ref()));
-                                for row in &rows {
-                                    b.push_record(row.iter().map(ToString::to_string));
-                                }
-                                println!("{}", b.build());
-                            }
-                            println!("({} rows)", rows.len());
-                        }
-                        _ => unreachable!(),
-                    }
-                }
+    fn execute_stmt(&mut self, stmt: Stmt) -> Result<QueryResult> {
+        match stmt {
+            Stmt::CreateTable { name, defs } => {
+                let (name, schema) = binder::bind_create_table(&self.cata, &name, &defs)?;
+                self.cata.create_table(&mut self.pool, name, schema)?;
+                Ok(QueryResult::None)
+            }
+            Stmt::DropTable { name } => {
+                ensure!(
+                    self.cata.get(&name.lexeme).is_some(),
+                    binder::Error::TableNotFound(name)
+                );
+                self.cata.drop_table(&mut self.pool, &name.lexeme)?;
+                Ok(QueryResult::None)
+            }
+            Stmt::Insert(insert) => {
+                let plan = binder::bind_insert(&self.cata, &insert)?;
+                self.run(&plan)
+            }
+            Stmt::Select(select) => {
+                let plan = binder::bind_select(&self.cata, &select)?;
+                self.run(&plan)
             }
         }
-        Ok(())
     }
 
     fn run(&mut self, plan: &Plan) -> Result<QueryResult> {
@@ -146,5 +124,26 @@ impl<D: Disk> Database<D> {
         };
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const POOL_CAP: usize = 5;
+
+    fn mem_db() -> Database<MemDisk> {
+        Database::with_disk(MemDisk::default(), POOL_CAP).unwrap()
+    }
+
+    #[test]
+    fn bulk_insert() -> Result<()> {
+        let mut db = mem_db();
+        db.execute("create table t (s text, n int, b bool)")?;
+        for _ in 1..=200 {
+            db.execute("insert into f values ('foo', {n}, true)")?;
+        }
+        Ok(())
     }
 }

@@ -21,7 +21,7 @@ pub enum Error {
     UnexpectedEof(Span),
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Clone, Copy)]
 struct Token {
@@ -61,6 +61,18 @@ pub fn parse(source: &str) -> Result<Vec<Stmt>> {
     .parse()
 }
 
+pub fn parse_one(source: &str) -> Result<Stmt> {
+    // todo: this is wasteful since there might be more
+    // than one statement and we are consuming all tokens
+    let tokens = lex(source)?;
+    Parser {
+        source,
+        tokens,
+        cursor: 0,
+    }
+    .parse_one()
+}
+
 struct Parser<'a> {
     source: &'a str,
     tokens: Vec<Token>,
@@ -68,16 +80,25 @@ struct Parser<'a> {
 }
 
 impl Parser<'_> {
-    fn parse(mut self) -> Result<Vec<Stmt>> {
+    fn parse(&mut self) -> Result<Vec<Stmt>> {
         let mut stmts = Vec::new();
 
         while !self.is_eof() {
             let stmt = self.stmt()?;
-            self.expect(Kind::Semi)?;
+            if !self.is_eof() {
+                self.expect(Kind::Semi)?;
+            }
             stmts.push(stmt);
         }
 
         Ok(stmts)
+    }
+
+    fn parse_one(&mut self) -> Result<Stmt> {
+        let stmt = self.stmt()?;
+        self.eat(Kind::Semi); // optional semicolon
+        ensure!(self.is_eof(), Error::UnexpectedEof(self.peek().span));
+        Ok(stmt)
     }
 
     fn stmt(&mut self) -> Result<Stmt> {
@@ -127,7 +148,7 @@ impl Parser<'_> {
             );
             self.bump();
             defs.push(ColumnDef { name, ty });
-            if !self.matches(Kind::Comma) {
+            if !self.eat(Kind::Comma) {
                 break;
             }
         }
@@ -174,7 +195,7 @@ impl Parser<'_> {
         let mut exprs = Vec::new();
         loop {
             exprs.push(self.expr()?);
-            if !self.matches(Kind::Comma) { break; }
+            if !self.eat(Kind::Comma) { break; }
         }
         Ok(exprs)
     }
@@ -273,10 +294,12 @@ impl Parser<'_> {
         }
     }
 
-    fn eat(&mut self) -> Token {
-        let t = self.peek();
+    fn eat(&mut self, kind: Kind) -> bool {
+        if self.peek().kind != kind {
+            return false;
+        }
         self.bump();
-        t
+        true
     }
 
     // fn prev(&self) -> Token {
@@ -287,13 +310,7 @@ impl Parser<'_> {
         self.peek().kind == Kind::Eof
     }
 
-    fn matches(&mut self, kind: Kind) -> bool {
-        if self.peek().kind != kind {
-            return false;
-        }
-        self.bump();
-        true
-    }
+    // fn matches(&mut self, kind: Kind) -> bool {}
 
     fn expect(&mut self, kind: Kind) -> Result<Token> {
         let t = self.peek();
@@ -307,7 +324,8 @@ impl Parser<'_> {
                 },
             });
         };
-        Ok(self.eat())
+        self.bump();
+        Ok(t)
     }
 
     fn ident(&mut self) -> Result<Ident> {
