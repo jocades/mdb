@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let schema = Schema::new(vec![
+        let schema = Schema::new_unchecked(vec![
             Column::new("integer", Type::Int),
             Column::new("boolean", Type::Bool),
             Column::new("string", Type::Text),

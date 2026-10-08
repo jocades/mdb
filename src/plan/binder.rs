@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::catalog::{self, Catalog, Column, Schema};
-use crate::sql::ast::{BinOp, ColumnDef, Expr, Ident};
+use crate::catalog::{self, Catalog, Column, EMPTY_SCHEMA, Schema};
+use crate::sql::ast::{self, BinOp, ColumnDef, Expr, Ident};
 use crate::value::{Type, Value};
 
 use super::Plan;
@@ -14,12 +14,25 @@ pub enum Error {
     DuplicateColumn(Ident),
     TableNotFound(Ident),
     ColumnNotFound(Ident),
-    InvalidOperands { op: BinOp, lty: Type, rty: Type },
+    InvalidOperands {
+        op: BinOp,
+        lty: Type,
+        rty: Type,
+    },
+    ArityMismatch {
+        table: Ident,
+        expected: u16,
+        found: u16,
+    },
+    ColumnTypeMismatch {
+        column: Arc<str>,
+        expected: Type,
+        found: Type,
+    },
 }
 
 type Result<T> = std::result::Result<T, Error>;
 
-/// Validate table creation
 pub fn bind_create_table(
     cata: &Catalog,
     name: &Ident,
@@ -30,16 +43,16 @@ pub fn bind_create_table(
         Error::TableExists(name.clone())
     );
 
-    let mut columns = Vec::with_capacity(defs.len());
-    let mut by_name = HashMap::with_capacity(defs.len());
-    for (idx, col) in defs.iter().enumerate() {
-        if let Some(_existing) = by_name.insert(col.name.lexeme.clone(), idx) {
-            bail!(Error::DuplicateColumn(col.name.clone()))
+    let mut cols = Vec::with_capacity(defs.len());
+    let mut seen = HashSet::with_capacity(defs.len());
+    for def in defs {
+        if !seen.insert(&def.name.lexeme) {
+            bail!(Error::DuplicateColumn(def.name.clone()))
         }
-        columns.push(Column::new(col.name.lexeme.clone(), col.ty));
+        cols.push(Column::new(def.name.lexeme.clone(), def.ty));
     }
 
-    Ok((name.lexeme.clone(), Schema { columns, by_name }))
+    Ok((name.lexeme.clone(), Schema::new_unchecked(cols)))
 }
 
 pub fn bind_expr(expr: &Expr, input: &Schema) -> Result<BoundExpr> {
@@ -82,8 +95,8 @@ fn type_of_bin(op: BinOp, lhs: Type, rhs: Type) -> Option<Type> {
     }
 }
 
-pub fn bind_select(cata: &Catalog, exprs: &[Expr], from: &Option<Ident>) -> Result<Plan> {
-    let input = match from {
+pub fn bind_select(cata: &Catalog, select: &ast::Select) -> Result<Plan> {
+    let input = match &select.from {
         None => Plan::OneRow,
         Some(name) => {
             let table = cata
@@ -97,13 +110,13 @@ pub fn bind_select(cata: &Catalog, exprs: &[Expr], from: &Option<Ident>) -> Resu
     };
 
     let mut projection = Vec::new();
-    let mut cols = Vec::new();
-    for expr in exprs {
+    let mut schema = Schema::empty();
+    for expr in &select.cols {
         match expr {
             Expr::Wildcard => {
                 for (index, col) in input.schema().columns.iter().enumerate() {
                     projection.push(BoundExpr::Column { index, ty: col.ty });
-                    cols.push(Column::new(col.name.clone(), col.ty));
+                    schema.columns.push(Column::new(col.name.clone(), col.ty));
                 }
             }
             _ => {
@@ -112,7 +125,7 @@ pub fn bind_select(cata: &Catalog, exprs: &[Expr], from: &Option<Ident>) -> Resu
                     Expr::Ident(ident) => ident.lexeme.clone(),
                     _ => "?column?".into(),
                 };
-                cols.push(Column::new(name, bound.ty()));
+                schema.columns.push(Column::new(name, bound.ty()));
                 projection.push(bound);
             }
         }
@@ -121,6 +134,41 @@ pub fn bind_select(cata: &Catalog, exprs: &[Expr], from: &Option<Ident>) -> Resu
     Ok(Plan::Project {
         input: Box::new(input),
         projection,
-        schema: Arc::new(Schema::new(cols)),
+        schema: Arc::new(schema),
+    })
+}
+
+pub fn bind_insert(cata: &Catalog, insert: &ast::Insert) -> Result<Plan> {
+    let table = cata
+        .get(&insert.into.lexeme)
+        .ok_or_else(|| Error::TableNotFound(insert.into.clone()))?;
+
+    ensure!(
+        insert.vals.len() == table.schema.columns.len(),
+        Error::ArityMismatch {
+            table: insert.into.clone(),
+            expected: table.schema.columns.len() as u16,
+            found: insert.vals.len() as u16,
+        }
+    );
+
+    let mut exprs = Vec::with_capacity(table.schema.columns.len());
+    for (expr, col) in insert.vals.iter().zip(&table.schema.columns) {
+        let bound = bind_expr(expr, &EMPTY_SCHEMA)?;
+        ensure!(
+            bound.ty() == col.ty,
+            Error::ColumnTypeMismatch {
+                column: col.name.clone(),
+                expected: col.ty,
+                found: bound.ty(),
+            }
+        );
+        exprs.push(bound);
+    }
+
+    Ok(Plan::Insert {
+        table: table.name.clone(),
+        input: Box::new(Plan::Values { exprs: vec![exprs] }),
+        schema: Arc::new(Schema::new_unchecked(vec![Column::new("count", Type::Int)])),
     })
 }

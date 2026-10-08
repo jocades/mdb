@@ -11,12 +11,44 @@ mod sql;
 mod storage;
 mod value;
 
+use std::fs::File;
+
 use database::Database;
 use repl::Repl;
 use storage::Disk;
 
+use crate::storage::{FileDisk, MemDisk};
+
+fn main() {
+    // debug_file();
+    let mut args = std::env::args();
+    match args.len() {
+        1 => run(Database::memory()),
+        2 => {
+            let path = args.nth(1).unwrap();
+            run(Database::open(&path).unwrap())
+        }
+        _ => {
+            eprintln!("usage: mbd [PATH]");
+            std::process::exit(1);
+        }
+    };
+}
+
+fn debug_file() {
+    let mut db = Database::with_disk(FileDisk::open("./bak/db").unwrap(), 2).unwrap();
+}
+
+fn debug_mem() {
+    let mut db = Database::with_disk(MemDisk::default(), 2).unwrap();
+    db.execute("create table t (name text, value int);")
+        .unwrap();
+    db.execute("insert into t values ('foo', 42);").unwrap();
+    db.execute("select value, name from t;").unwrap();
+}
+
 fn run<D: Disk>(mut db: Database<D>) {
-    dbg!(&db.catalog);
+    dbg!(&db.cata);
 
     for source in Repl::new() {
         let trimmed = source.trim();
@@ -34,7 +66,7 @@ fn run<D: Disk>(mut db: Database<D>) {
 fn run_command(db: &mut Database<impl Disk>, cmd: &str) {
     match cmd {
         "catalog" => {
-            dbg!(&db.catalog);
+            dbg!(&db.cata);
         }
         _ => eprintln!("error: unknown command `{cmd}`"),
     }
@@ -64,19 +96,4 @@ fn report(err: database::Error, src: &str) {
         // } => todo!(),
         // TypeMismatch { expected, found } => todo!(),
     }
-}
-
-fn main() {
-    let mut args = std::env::args();
-    match args.len() {
-        1 => run(Database::memory()),
-        2 => {
-            let path = args.nth(1).unwrap();
-            run(Database::open(&path).unwrap())
-        }
-        _ => {
-            eprintln!("usage: mbd [PATH]");
-            std::process::exit(1);
-        }
-    };
 }

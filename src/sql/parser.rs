@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use std::sync::Arc;
 
-use super::ast::{BinOp, ColumnDef, Expr, Ident, Lit, Stmt};
+use super::ast::{self, BinOp, ColumnDef, Expr, Ident, Lit, Stmt};
 use super::lexer::{self, Kind, Lexer, Span};
 use crate::value::Type;
 
@@ -113,7 +113,7 @@ impl Parser<'_> {
         self.expect(Kind::Table)?;
         let name = self.ident()?;
         self.expect(Kind::LParen)?;
-        let mut columns = vec![];
+        let mut defs = vec![];
         loop {
             let name = self.ident()?;
             let t = self.peek();
@@ -126,16 +126,13 @@ impl Parser<'_> {
                 _ => bail!(Error::UnknwonType(t.span)),
             );
             self.bump();
-            columns.push(ColumnDef { name, ty });
+            defs.push(ColumnDef { name, ty });
             if !self.matches(Kind::Comma) {
                 break;
             }
         }
         self.expect(Kind::RParen)?;
-        Ok(Stmt::CreateTable {
-            name,
-            defs: columns,
-        })
+        Ok(Stmt::CreateTable { name, defs })
     }
 
     fn drop(&mut self) -> Result<Stmt> {
@@ -149,15 +146,15 @@ impl Parser<'_> {
         let into = self.ident()?;
         self.expect(Kind::Values)?;
         self.expect(Kind::LParen)?;
-        let values = self.expr_list()?;
+        let vals = self.expr_list()?;
         self.expect(Kind::RParen)?;
-        Ok(Stmt::Insert { into, vals: values })
+        Ok(Stmt::Insert(ast::Insert { into, vals }))
     }
 
     fn select(&mut self) -> Result<Stmt> {
-        let projection = self.expr_list()?;
+        let cols = self.expr_list()?;
         let t = self.peek();
-        let relation = match t.kind {
+        let from = match t.kind {
             Kind::From => {
                 self.bump();
                 Some(self.ident()?)
@@ -169,10 +166,7 @@ impl Parser<'_> {
                 span: t.span,
             }),
         };
-        Ok(Stmt::Select {
-            cols: projection,
-            from: relation,
-        })
+        Ok(Stmt::Select(ast::Select { cols, from }))
     }
 
     #[rustfmt::skip]

@@ -30,7 +30,8 @@ impl Type {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, derive_more::From)]
+#[derive(Debug, PartialEq, Eq, Clone, derive_more::From, derive_more::Display)]
+#[display("{_0}")]
 pub enum Value {
     #[from]
     Int(i64),

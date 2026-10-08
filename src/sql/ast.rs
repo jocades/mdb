@@ -6,21 +6,22 @@ use super::lexer::Span;
 
 #[derive(Debug)]
 pub enum Stmt {
-    CreateTable {
-        name: Ident,
-        defs: Vec<ColumnDef>,
-    },
-    DropTable {
-        name: Ident,
-    },
-    Insert {
-        into: Ident,
-        vals: Vec<Expr>,
-    },
-    Select {
-        cols: Vec<Expr>,
-        from: Option<Ident>,
-    },
+    CreateTable { name: Ident, defs: Vec<ColumnDef> },
+    DropTable { name: Ident },
+    Insert(Insert),
+    Select(Select),
+}
+
+#[derive(Debug)]
+pub struct Insert {
+    pub into: Ident,
+    pub vals: Vec<Expr>,
+}
+
+#[derive(Debug)]
+pub struct Select {
+    pub cols: Vec<Expr>,
+    pub from: Option<Ident>,
 }
 
 #[derive(Debug)]
