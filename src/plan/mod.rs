@@ -18,7 +18,7 @@ pub enum Plan {
         schema: Arc<Schema>,
     },
     Values {
-        exprs: Vec<Vec<BoundExpr>>,
+        rows: Vec<Vec<BoundExpr>>,
         schema: Arc<Schema>,
     },
     Insert {

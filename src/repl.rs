@@ -55,7 +55,7 @@ impl Repl {
 
                     if self.buf.is_empty() && trimmed.starts_with("/") {
                         _ = self.rl.add_history_entry(&line);
-                        match line.as_ref() {
+                        match trimmed {
                             "/catalog" => return Some(Input::Command(Ok(Command::Catalog))),
                             _ => return Some(Input::Command(Err(line))),
                         }

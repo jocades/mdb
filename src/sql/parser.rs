@@ -181,9 +181,12 @@ impl<'a> Parser<'a> {
         self.expect(Kind::Into)?;
         let into = self.ident()?;
         self.expect(Kind::Values)?;
-        self.expect(Kind::LParen)?;
-        let vals = self.comma_sep(Self::expr)?;
-        self.expect(Kind::RParen)?;
+        let vals = self.comma_sep(|this| {
+            this.expect(Kind::LParen)?;
+            let row = this.comma_sep(Self::expr)?;
+            this.expect(Kind::RParen)?;
+            Ok(row)
+        })?;
         Ok(Stmt::Insert(ast::Insert { into, vals }))
     }
 
@@ -206,12 +209,13 @@ impl<'a> Parser<'a> {
     }
 
     fn select_item(&mut self) -> Result<SelectItem> {
-        if self.eat(Kind::Star) {
-            return Ok(SelectItem::Wildcard);
-        }
-        Ok(SelectItem::Expr {
-            expr: self.expr()?,
-            alias: None,
+        Ok(if self.eat(Kind::Star) {
+            SelectItem::Wildcard
+        } else {
+            SelectItem::Expr {
+                expr: self.expr()?,
+                alias: None,
+            }
         })
     }
 

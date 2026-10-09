@@ -15,7 +15,7 @@ pub enum Stmt {
 #[derive(Debug)]
 pub struct Insert {
     pub into: Ident,
-    pub vals: Vec<Expr>,
+    pub vals: Vec<Vec<Expr>>,
 }
 
 #[derive(Debug)]

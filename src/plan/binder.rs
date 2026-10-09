@@ -152,33 +152,37 @@ pub fn bind_insert(cata: &Catalog, insert: &ast::Insert) -> Result<Plan> {
         .get(&insert.into.lexeme)
         .ok_or_else(|| Error::TableNotFound(insert.into.clone()))?;
 
-    ensure!(
-        insert.vals.len() == table.schema.columns.len(),
-        Error::ArityMismatch {
-            table: insert.into.clone(),
-            expected: table.schema.columns.len() as u16,
-            found: insert.vals.len() as u16,
-        }
-    );
-
-    let mut exprs = Vec::with_capacity(table.schema.columns.len());
-    for (expr, col) in insert.vals.iter().zip(&table.schema.columns) {
-        let bound = bind_expr(expr, &EMPTY_SCHEMA)?;
+    let mut rows = Vec::with_capacity(insert.vals.len());
+    for row in &insert.vals {
         ensure!(
-            bound.ty() == col.ty,
-            Error::ColumnTypeMismatch {
-                column: col.name.clone(),
-                expected: col.ty,
-                found: bound.ty(),
+            row.len() == table.schema.columns.len(),
+            Error::ArityMismatch {
+                table: insert.into.clone(),
+                expected: table.schema.columns.len() as u16,
+                found: row.len() as u16,
             }
         );
-        exprs.push(bound);
+
+        let mut exprs = Vec::with_capacity(table.schema.columns.len());
+        for (expr, col) in row.iter().zip(&table.schema.columns) {
+            let bound = bind_expr(expr, &EMPTY_SCHEMA)?;
+            ensure!(
+                bound.ty() == col.ty,
+                Error::ColumnTypeMismatch {
+                    column: col.name.clone(),
+                    expected: col.ty,
+                    found: bound.ty(),
+                }
+            );
+            exprs.push(bound);
+        }
+        rows.push(exprs);
     }
 
     Ok(Plan::Insert {
         tid: table.name.clone(),
         child: Box::new(Plan::Values {
-            exprs: vec![exprs],
+            rows,
             schema: table.schema.clone(),
         }),
         schema: Arc::new(Schema::new_unchecked(vec![Column::new("count", Type::Int)])),
