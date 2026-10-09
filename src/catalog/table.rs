@@ -38,7 +38,7 @@ use std::sync::LazyLock;
 pub static EMPTY_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| Arc::new(Schema::empty()));
 
 impl Schema {
-    /// Caller must gurantee there are no repeated columns
+    /// Caller must guarantee there are no repeated columns
     pub fn new_unchecked(columns: Vec<Column>) -> Self {
         Self { columns }
     }
@@ -47,8 +47,12 @@ impl Schema {
         Self { columns: vec![] }
     }
 
-    pub fn index_of(&self, col_name: &str) -> Option<usize> {
-        self.columns.iter().position(|col| &*col.name == col_name)
+    pub fn index_of(&self, name: &str) -> Option<usize> {
+        self.columns.iter().position(|col| &*col.name == name)
+    }
+
+    pub fn add_column(&mut self, name: impl Into<Arc<str>>, ty: Type) {
+        self.columns.push(Column::new(name, ty));
     }
 }
 

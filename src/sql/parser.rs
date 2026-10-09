@@ -187,7 +187,10 @@ impl Parser<'_> {
                 span: t.span,
             }),
         };
-        Ok(Stmt::Select(ast::Select { cols, from }))
+
+        let were = self.eat(Kind::Where).then(|| self.expr()).transpose()?;
+
+        Ok(Stmt::Select(ast::Select { cols, from, were }))
     }
 
     #[rustfmt::skip]

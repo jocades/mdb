@@ -41,6 +41,8 @@ pub enum Value {
     Text(Arc<str>),
 }
 
+pub type Tuple = Vec<Value>;
+
 impl Value {
     pub fn ty(&self) -> Type {
         match self {

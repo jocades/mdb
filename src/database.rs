@@ -1,13 +1,11 @@
-use std::sync::Arc;
-use std::{io, path::Path};
+use std::{io, path::Path, sync::Arc};
 
 use crate::catalog::{self, Catalog, Schema};
-use crate::exec::Tuple;
 use crate::exec::{self, Context};
 use crate::plan::{Plan, binder};
 use crate::sql::{self, ast::Stmt};
 use crate::storage::{DEFAULT_POOL_CAPACITY, Disk, FileDisk, MemDisk, Pool};
-use crate::value::Value;
+use crate::value::{Tuple, Value};
 
 pub struct Database<D: Disk> {
     pub pool: Pool<D>,
@@ -112,37 +110,154 @@ impl<D: Disk> Database<D> {
             rows.push(tuple)
         }
 
-        let result = match plan {
+        Ok(match plan {
             Plan::Insert { .. } => match rows[0][0] {
                 Value::Int(n) => QueryResult::Affected(n as usize),
                 _ => unreachable!(),
             },
             _ => QueryResult::Rows {
-                schema: plan.schema().clone(),
                 rows,
+                schema: plan.schema().clone(),
             },
-        };
+        })
+    }
+}
 
-        Ok(result)
+macro_rules! sql {
+    ($($arg:tt)*) => {
+        sql(format_args!($($arg)*))
+    };
+}
+
+#[derive(Debug)]
+enum Sql<'a> {
+    Owned(String),
+    Borrowed(&'a str),
+}
+
+fn sql<'a>(args: std::fmt::Arguments<'a>) -> Sql<'a> {
+    match args.as_str() {
+        None => Sql::Owned(args.to_string()),
+        Some(s) => Sql::Borrowed(s),
+    }
+}
+
+impl Sql<'_> {
+    fn execute(self, db: &mut Database<impl Disk>) -> Result<QueryResult> {
+        match self {
+            Sql::Owned(input) => db.execute(&input),
+            Sql::Borrowed(input) => db.execute(input),
+        }
+    }
+
+    fn execute_batch(self, db: &mut Database<impl Disk>) -> Result<Vec<QueryResult>> {
+        match self {
+            Sql::Owned(input) => db.execute_batch(&input),
+            Sql::Borrowed(input) => db.execute_batch(input),
+        }
+    }
+}
+
+fn test() {
+    // let args = format_args!("select * from t where n = {}", 1);
+    // println!("{}", args)
+    // format!();
+}
+
+impl std::fmt::Display for QueryResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QueryResult::None => f.write_str("OK"),
+            QueryResult::Affected(n) => write!(f, "{n} row(s) affected"),
+            QueryResult::Rows { rows, schema } => {
+                if rows.len() != 0 {
+                    let mut b = tabled::builder::Builder::new();
+                    b.push_record(schema.columns.iter().map(|col| col.name.as_ref()));
+                    for row in rows {
+                        b.push_record(row.iter().map(ToString::to_string));
+                    }
+                    writeln!(f, "{}", b.build())?;
+                }
+                write!(f, "({} rows)", rows.len())
+            }
+        }
+    }
+}
+
+struct Timeit(std::time::Instant);
+
+fn timeit() -> Timeit {
+    Timeit(std::time::Instant::now())
+}
+
+impl Drop for Timeit {
+    fn drop(&mut self) {
+        println!("took {:?}", self.0.elapsed());
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
-    const POOL_CAP: usize = 5;
+    const POOL_CAP: usize = 50;
 
     fn mem_db() -> Database<MemDisk> {
         Database::with_disk(MemDisk::default(), POOL_CAP).unwrap()
     }
 
+    fn temp_db() -> Database<FileDisk> {
+        Database::with_disk(FileDisk::temp().unwrap(), POOL_CAP).unwrap()
+    }
+
+    macro_rules! timeit {
+        ($($arg:tt)*) => {{
+            let _span = Timeit(Instant::now());
+            $($arg)*
+        }};
+        // ($db:expr, $($arg:tt)*) => {{
+                               //     let start = Instant::now();
+                               //     let res = sql!($($arg)*).execute(&mut $db)?;
+                               //     (res, start.elapsed())
+                               // }};
+    }
+
+    fn bulk_insert(db: &mut Database<impl Disk>, count: usize) {
+        for n in 1..=count {
+            sql!("insert into t values ('foo', {n}, true)")
+                .execute(db)
+                .unwrap();
+        }
+    }
+
     #[test]
-    fn bulk_insert() -> Result<()> {
+    #[ignore]
+    fn executor() -> Result<()> {
         let mut db = mem_db();
-        db.execute("create table t (s text, n int, b bool)")?;
-        for _ in 1..=200 {
-            db.execute("insert into f values ('foo', {n}, true)")?;
+        // println!("{res}, took {:?}", start.elapsed());
+        sql!("create table t (s text, n int, b bool)").execute(&mut db)?;
+        // let (res, took) = timeit!(db, "insert into t values ('foo', {}, true)", 1);
+        // println!("{res}, took {took:?}");
+        {
+            let _t = timeit();
+            for n in 1..=20 {
+                sql!("insert into t values ('foo', {n}, true)").execute(&mut db)?;
+            }
+        }
+
+        // let start = Instant::now();
+        // let res = sql!("select * from t").execute(&mut db)?;
+        // println!("{res}, took {:?}", start.elapsed());
+        Ok(())
+    }
+
+    #[test]
+    fn persist() -> Result<()> {
+        let mut db = temp_db();
+        sql!("create table t (s text, n int, b bool)").execute(&mut db)?;
+        timeit! {
+            bulk_insert(&mut db, 20);
         }
         Ok(())
     }

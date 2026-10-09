@@ -4,12 +4,10 @@ use crate::catalog::{self, Catalog, Schema};
 use crate::heap::HeapScan;
 use crate::plan::{BoundExpr, EvalError, Plan};
 use crate::storage::{Disk, Pool};
-use crate::value::{Value, codec};
+use crate::value::{Tuple, Value, codec};
 
-pub type Tuple = Vec<Value>;
-
-pub struct Context<'a, P: Disk> {
-    pub pool: &'a mut Pool<P>,
+pub struct Context<'a, D: Disk> {
+    pub pool: &'a mut Pool<D>,
     pub cata: &'a mut Catalog,
 }
 
@@ -20,21 +18,25 @@ pub trait Operator<D: Disk> {
 pub fn build<'p, D: Disk + 'p>(plan: &'p Plan, cata: &Catalog) -> Box<dyn Operator<D> + 'p> {
     match plan {
         Plan::OneRow => Box::new(OneRow { done: false }),
-        Plan::Scan { table, schema } => {
-            let cursor = cata.get(&table).expect("bound").heap.scan();
+        Plan::Scan { tid, schema } => {
+            let cursor = cata.get(&tid).expect("bound").heap.scan();
             Box::new(SeqScan { cursor, schema })
         }
         Plan::Project {
-            input, projection, ..
+            child, projection, ..
         } => Box::new(Project {
-            input: build(input, cata),
+            child: build(child, cata),
             projection,
         }),
         Plan::Values { exprs } => Box::new(Values { exprs, index: 0 }),
-        Plan::Insert { table, input, .. } => Box::new(Insert {
-            tid: table,
-            input: build(input, cata),
+        Plan::Insert { tid, child, .. } => Box::new(Insert {
+            tid,
+            child: build(child, cata),
             done: false,
+        }),
+        Plan::Filter { child, predicate } => Box::new(Filter {
+            child: build(child, cata),
+            predicate,
         }),
     }
 }
@@ -75,22 +77,40 @@ impl<D: Disk> Operator<D> for SeqScan<'_> {
     }
 }
 
+struct Filter<'p, D: Disk> {
+    child: Box<dyn Operator<D> + 'p>,
+    predicate: &'p BoundExpr,
+}
+
+impl<D: Disk> Operator<D> for Filter<'_, D> {
+    fn next(&mut self, cx: &mut Context<D>) -> Result<Option<Tuple>, Error> {
+        while let Some(tuple) = self.child.next(cx)? {
+            if self.predicate.eval(&tuple)? == Value::Bool(true) {
+                return Ok(Some(tuple));
+            }
+        }
+        Ok(None)
+    }
+}
+
 struct Project<'p, D: Disk> {
-    input: Box<dyn Operator<D> + 'p>,
+    child: Box<dyn Operator<D> + 'p>,
     projection: &'p [BoundExpr],
 }
 
 impl<D: Disk> Operator<D> for Project<'_, D> {
-    fn next(&mut self, pool: &mut Context<D>) -> Result<Option<Tuple>, Error> {
-        let Some(tuple) = self.input.next(pool)? else {
+    fn next(&mut self, cx: &mut Context<D>) -> Result<Option<Tuple>, Error> {
+        let Some(tuple) = self.child.next(cx)? else {
             return Ok(None);
         };
-        Ok(Some(
-            self.projection
-                .iter()
-                .map(|expr| expr.eval(&tuple))
-                .collect::<Result<_, _>>()?,
-        ))
+
+        let out = self
+            .projection
+            .iter()
+            .map(|expr| expr.eval(&tuple))
+            .collect::<Result<_, _>>()?;
+
+        Ok(Some(out))
     }
 }
 
@@ -115,7 +135,7 @@ impl<D: Disk> Operator<D> for Values<'_> {
 
 struct Insert<'p, D> {
     tid: &'p str,
-    input: Box<dyn Operator<D> + 'p>,
+    child: Box<dyn Operator<D> + 'p>,
     done: bool,
 }
 
@@ -128,7 +148,7 @@ impl<D: Disk> Operator<D> for Insert<'_, D> {
         // Drain the child, this should be revisited but for now its fine to keep it in memory
         // it also avoids the `halloween problem` entirely but at a cost...
         let mut tuples = Vec::new();
-        while let Some(tuple) = self.input.next(cx)? {
+        while let Some(tuple) = self.child.next(cx)? {
             tuples.push(tuple);
         }
 

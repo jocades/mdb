@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::catalog::{self, Catalog, Column, EMPTY_SCHEMA, Schema};
+use crate::catalog::{Catalog, Column, EMPTY_SCHEMA, Schema};
 use crate::sql::ast::{self, BinOp, ColumnDef, Expr, Ident};
-use crate::value::{Type, Value};
+use crate::value::Type;
 
 use super::Plan;
 use super::bound::BoundExpr;
@@ -29,6 +29,7 @@ pub enum Error {
         expected: Type,
         found: Type,
     },
+    WhereTypeMustBeBool,
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -96,43 +97,52 @@ fn type_of_bin(op: BinOp, lhs: Type, rhs: Type) -> Option<Type> {
 }
 
 pub fn bind_select(cata: &Catalog, select: &ast::Select) -> Result<Plan> {
-    let input = match &select.from {
+    let mut source = match &select.from {
         None => Plan::OneRow,
         Some(name) => {
             let table = cata
                 .get(&name.lexeme)
                 .ok_or_else(|| Error::TableNotFound(name.clone()))?;
             Plan::Scan {
-                table: table.name.clone(),
+                tid: table.name.clone(),
                 schema: table.schema.clone(),
             }
         }
     };
 
     let mut projection = Vec::new();
-    let mut schema = Schema::empty();
+    let mut schema = Schema::empty(); // output schema; built from the projection expressions
     for expr in &select.cols {
         match expr {
             Expr::Wildcard => {
-                for (index, col) in input.schema().columns.iter().enumerate() {
+                for (index, col) in source.schema().columns.iter().enumerate() {
                     projection.push(BoundExpr::Column { index, ty: col.ty });
-                    schema.columns.push(Column::new(col.name.clone(), col.ty));
+                    schema.add_column(col.name.clone(), col.ty);
                 }
             }
             _ => {
-                let bound = bind_expr(expr, &input.schema())?;
+                let bound = bind_expr(expr, source.schema())?;
                 let name = match expr {
                     Expr::Ident(ident) => ident.lexeme.clone(),
                     _ => "?column?".into(),
                 };
-                schema.columns.push(Column::new(name, bound.ty()));
+                schema.add_column(name, bound.ty());
                 projection.push(bound);
             }
         }
     }
 
+    if let Some(were) = &select.were {
+        let predicate = bind_expr(were, source.schema())?;
+        ensure!(predicate.ty() == Type::Bool, Error::WhereTypeMustBeBool);
+        source = Plan::Filter {
+            child: Box::new(source),
+            predicate,
+        };
+    }
+
     Ok(Plan::Project {
-        input: Box::new(input),
+        child: Box::new(source),
         projection,
         schema: Arc::new(schema),
     })
@@ -167,8 +177,8 @@ pub fn bind_insert(cata: &Catalog, insert: &ast::Insert) -> Result<Plan> {
     }
 
     Ok(Plan::Insert {
-        table: table.name.clone(),
-        input: Box::new(Plan::Values { exprs: vec![exprs] }),
+        tid: table.name.clone(),
+        child: Box::new(Plan::Values { exprs: vec![exprs] }),
         schema: Arc::new(Schema::new_unchecked(vec![Column::new("count", Type::Int)])),
     })
 }

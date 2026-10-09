@@ -31,24 +31,31 @@ pub struct FileDisk {
 }
 
 impl FileDisk {
+    pub fn with_file(file: File) -> io::Result<Self> {
+        let len = file.metadata()?.len();
+        ensure!(
+            len % PAGE_SIZE as u64 == 0,
+            corrupt("file size is not a multiple of page size")
+        );
+        Ok(Self {
+            file,
+            pages: (len / PAGE_SIZE as u64) as u32,
+        })
+    }
+
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         let file = File::options()
             .read(true)
             .create(true)
             .write(true)
             .open(path)?;
+        Self::with_file(file)
+    }
 
-        let len = file.metadata()?.len();
-
-        ensure!(
-            len % PAGE_SIZE as u64 == 0,
-            corrupt("file size is not a multiple of page size")
-        );
-
-        Ok(Self {
-            file,
-            pages: (len / PAGE_SIZE as u64) as u32,
-        })
+    #[cfg(test)]
+    pub fn temp() -> io::Result<Self> {
+        let file = tempfile::tempfile()?;
+        Self::with_file(file)
     }
 }
 

@@ -30,12 +30,12 @@ impl BoundExpr {
         }
     }
 
-    pub fn eval(&self, tuple: &[Value]) -> Result<Value, EvalError> {
+    pub fn eval(&self, scope: &[Value]) -> Result<Value, EvalError> {
         match self {
             BoundExpr::Lit(v) => Ok(v.clone()),
-            BoundExpr::Column { index, .. } => Ok(tuple[*index].clone()),
+            BoundExpr::Column { index, .. } => Ok(scope[*index].clone()),
             BoundExpr::Bin { op, lhs, rhs, .. } => {
-                let (lhs, rhs) = (lhs.eval(tuple)?, rhs.eval(tuple)?);
+                let (lhs, rhs) = (lhs.eval(scope)?, rhs.eval(scope)?);
                 use BinOp::*;
                 match (op, lhs, rhs) {
                     (Add, Value::Int(a), Value::Int(b)) => {

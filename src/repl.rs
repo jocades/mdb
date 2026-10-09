@@ -10,6 +10,19 @@ pub struct Repl {
 
 const DEFAULT_HISTORY_PATH: &str = "history.txt";
 
+pub enum Input {
+    Code(String),
+    Command(Result<Command, String>),
+}
+
+pub enum Command {
+    Catalog,
+}
+
+pub fn input() -> Repl {
+    Repl::new()
+}
+
 impl Repl {
     pub fn new() -> Self {
         Self::with_history(DEFAULT_HISTORY_PATH)
@@ -30,7 +43,7 @@ impl Repl {
         _ = self.rl.save_history(&self.history_path);
     }
 
-    pub fn scan(&mut self) -> Option<String> {
+    pub fn scan(&mut self) -> Option<Input> {
         loop {
             let prompt = if self.buf.is_empty() { "sql> " } else { "...> " };
             match self.rl.readline(prompt) {
@@ -39,11 +52,22 @@ impl Repl {
                     if trimmed.is_empty() {
                         continue;
                     }
-                    self.buf.push_str(&line);
-                    if trimmed.ends_with(";") {
+
+                    if self.buf.is_empty() && trimmed.starts_with("/") {
                         _ = self.rl.add_history_entry(&line);
-                        return Some(std::mem::take(&mut self.buf));
+                        match line.as_ref() {
+                            "/catalog" => return Some(Input::Command(Ok(Command::Catalog))),
+                            _ => return Some(Input::Command(Err(line))),
+                        }
                     }
+
+                    self.buf.push_str(&line);
+                    _ = self.rl.add_history_entry(&line);
+
+                    if trimmed.ends_with(";") {
+                        return Some(Input::Code(std::mem::take(&mut self.buf)));
+                    }
+
                     self.buf.push('\n');
                 }
                 Err(ReadlineError::Interrupted) => self.buf.clear(),
@@ -67,7 +91,7 @@ impl Drop for Repl {
 }
 
 impl Iterator for Repl {
-    type Item = String;
+    type Item = Input;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.scan()
@@ -79,7 +103,7 @@ pub struct Lines<'a> {
 }
 
 impl<'a> Iterator for Lines<'a> {
-    type Item = String;
+    type Item = Input;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.repl.scan()

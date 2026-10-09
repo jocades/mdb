@@ -22,6 +22,7 @@ pub struct Insert {
 pub struct Select {
     pub cols: Vec<Expr>,
     pub from: Option<Ident>,
+    pub were: Option<Expr>,
 }
 
 #[derive(Debug)]

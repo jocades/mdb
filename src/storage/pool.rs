@@ -1,7 +1,10 @@
 use std::{collections::HashMap, io};
 
 use super::{Disk, Header, PAGE_SIZE, PageBuf, PageId, PageView, page_kind};
-use crate::bytes::{Buf, BufMut};
+use crate::{
+    bytes::{Buf, BufMut},
+    storage::MemDisk,
+};
 
 pub const DEFAULT_POOL_CAPACITY: usize = 100;
 
@@ -177,6 +180,16 @@ impl<D: Disk> Pool<D> {
 impl<D: Disk> Drop for Pool<D> {
     fn drop(&mut self) {
         let _ = self.flush();
+    }
+}
+
+impl Pool<MemDisk> {
+    pub fn reads(&self) -> usize {
+        self.disk.reads
+    }
+
+    pub fn writes(&self) -> usize {
+        self.disk.writes
     }
 }
 
