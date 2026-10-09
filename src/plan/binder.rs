@@ -193,3 +193,28 @@ pub fn bind_insert(cata: &Catalog, insert: &ast::Insert) -> Result<Plan> {
         schema: Arc::new(Schema::new_unchecked(vec![Column::new("count", Type::Int)])),
     })
 }
+
+pub fn bind_delete(cata: &Catalog, del: &ast::Delete) -> Result<Plan> {
+    let table = cata
+        .get(&del.from.lexeme)
+        .ok_or_else(|| Error::TableNotFound(del.from.clone()))?;
+
+    let mut source = Plan::Scan {
+        tid: table.name.clone(),
+        schema: table.schema.clone(),
+    };
+
+    if let Some(were) = &del.were {
+        let predicate = bind_expr(were, source.schema())?;
+        ensure!(predicate.ty() == Type::Bool, Error::WhereTypeMustBeBool);
+        source = Plan::Filter {
+            child: Box::new(source),
+            predicate,
+        };
+    }
+
+    Ok(Plan::Delete {
+        tid: table.name.clone(),
+        child: Box::new(source),
+    })
+}

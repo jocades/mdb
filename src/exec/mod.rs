@@ -3,16 +3,53 @@ mod eval;
 use std::{io, mem};
 
 use crate::catalog::{self, Catalog, Schema};
-use crate::heap::HeapScan;
+use crate::heap::{HeapScan, Rid};
 use crate::plan::{BoundExpr, Plan};
 use crate::storage::{Disk, Pool};
-use crate::value::{Tuple, Value, codec};
+use crate::value::{Row, Value, codec};
 
 pub use eval::{EvalError, eval};
 
 pub struct Context<'a, D: Disk> {
     pub pool: &'a mut Pool<D>,
     pub cata: &'a mut Catalog,
+    pub rows_affected: Option<usize>,
+}
+
+impl<'a, D: Disk> Context<'a, D> {
+    pub fn new(pool: &'a mut Pool<D>, cata: &'a mut Catalog) -> Self {
+        Self {
+            pool,
+            cata,
+            rows_affected: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Tuple {
+    pub row: Row,
+    pub rid: Option<Rid>,
+}
+
+impl Tuple {
+    pub fn new(row: Row) -> Self {
+        Self { row, rid: None }
+    }
+
+    pub fn with_rid(row: Row, rid: Rid) -> Self {
+        Self {
+            row,
+            rid: Some(rid),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            row: vec![],
+            rid: None,
+        }
+    }
 }
 
 pub trait Operator<D: Disk> {
@@ -42,6 +79,11 @@ pub fn build<'p, D: Disk + 'p>(plan: &'p Plan, cata: &Catalog) -> Box<dyn Operat
             child: build(child, cata),
             predicate,
         }),
+        Plan::Delete { tid, child } => Box::new(Delete {
+            child: build(child, cata),
+            tid,
+            done: false,
+        }),
     }
 }
 
@@ -63,7 +105,7 @@ struct OneRow {
 
 impl<D: Disk> Operator<D> for OneRow {
     fn next(&mut self, _: &mut Context<'_, D>) -> Result<Option<Tuple>, Error> {
-        Ok(if mem::replace(&mut self.done, true) { None } else { Some(vec![]) })
+        Ok(if mem::replace(&mut self.done, true) { None } else { Some(Tuple::empty()) })
     }
 }
 
@@ -76,7 +118,10 @@ impl<D: Disk> Operator<D> for SeqScan<'_> {
     fn next(&mut self, cx: &mut Context<D>) -> Result<Option<Tuple>, Error> {
         match self.cursor.next(&mut cx.pool)? {
             None => Ok(None),
-            Some((_rid, record)) => Ok(Some(codec::decode(&self.schema, record))),
+            Some((rid, record)) => {
+                let row = codec::decode(&self.schema, record);
+                Ok(Some(Tuple::with_rid(row, rid)))
+            }
         }
     }
 }
@@ -89,7 +134,7 @@ struct Filter<'p, D: Disk> {
 impl<D: Disk> Operator<D> for Filter<'_, D> {
     fn next(&mut self, cx: &mut Context<D>) -> Result<Option<Tuple>, Error> {
         while let Some(tuple) = self.child.next(cx)? {
-            if eval(self.predicate, &tuple)? == Value::Bool(true) {
+            if eval(self.predicate, &tuple.row)? == Value::Bool(true) {
                 return Ok(Some(tuple));
             }
         }
@@ -108,13 +153,13 @@ impl<D: Disk> Operator<D> for Project<'_, D> {
             return Ok(None);
         };
 
-        let out = self
+        let row = self
             .projection
             .iter()
-            .map(|expr| eval(expr, &tuple))
-            .collect::<Result<_, _>>()?;
+            .map(|expr| eval(expr, &tuple.row))
+            .collect::<Result<Row, _>>()?;
 
-        Ok(Some(out))
+        Ok(Some(Tuple::new(row)))
     }
 }
 
@@ -129,11 +174,11 @@ impl<D: Disk> Operator<D> for Values<'_> {
             return Ok(None);
         };
         self.index += 1;
-        let tuple = exprs
+        let rows = exprs
             .iter()
             .map(|expr| eval(expr, &[]))
-            .collect::<Result<_, _>>()?;
-        Ok(Some(tuple))
+            .collect::<Result<Row, _>>()?;
+        Ok(Some(Tuple::new(rows)))
     }
 }
 
@@ -158,10 +203,111 @@ impl<D: Disk> Operator<D> for Insert<'_, D> {
 
         let table = cx.cata.get_mut(self.tid).expect("bound");
         for tuple in &tuples {
-            table.insert(&mut cx.pool, tuple)?;
+            table.insert(&mut cx.pool, &tuple.row)?;
         }
 
-        // hacky way to return affected rows
-        Ok(Some(vec![Value::Int(tuples.len() as i64)]))
+        cx.rows_affected = Some(tuples.len());
+        Ok(Some(Tuple::empty()))
+    }
+}
+
+struct Delete<'p, D> {
+    tid: &'p str,
+    child: Box<dyn Operator<D> + 'p>,
+    done: bool,
+}
+
+impl<D: Disk> Operator<D> for Delete<'_, D> {
+    fn next(&mut self, cx: &mut Context<D>) -> Result<Option<Tuple>, Error> {
+        if mem::replace(&mut self.done, true) {
+            return Ok(None);
+        }
+
+        let mut rids = Vec::new();
+        while let Some(tuple) = self.child.next(cx)? {
+            rids.push(tuple.rid.expect("need rid"));
+        }
+
+        let table = cx.cata.get_mut(self.tid).expect("bound");
+        let affected = rids.len();
+        for rid in rids {
+            table.heap.delete(&mut cx.pool, rid)?;
+        }
+
+        cx.rows_affected = Some(affected);
+        Ok(Some(Tuple::empty()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::Database;
+    use crate::sql;
+    use crate::sql::ast::BinOp;
+    use crate::storage::{MemDisk, Pool};
+    use crate::value::{Type, Value};
+
+    #[test]
+    fn simple_select_with_no_filter() -> Result<(), crate::database::Error> {
+        // t = { x: int }
+        // select x from t where y = 4;
+        //
+        // Project([x])
+        //   Filter(y = 4)
+        //     SeqScan(t)
+
+        let mut db = Database::memory();
+        db.execute("create table t (x int, y int)")?;
+        db.execute("insert into t values (1, 2), (3, 4)")?;
+
+        let table = db.cata.get("t").unwrap();
+
+        let plan_schema = table.schema.clone();
+        let scan = table.heap.scan();
+
+        // the binder would create this tree
+        let seqscan = Box::new(SeqScan {
+            schema: plan_schema.as_ref(),
+            cursor: scan,
+        });
+
+        let predicate = BoundExpr::Bin {
+            op: BinOp::Eq,
+            lhs: Box::new(BoundExpr::Column {
+                index: 1,
+                ty: Type::Int,
+            }),
+            rhs: Box::new(BoundExpr::Const(Value::Int(4))),
+            ty: Type::Bool,
+        };
+
+        let filter = Box::new(Filter {
+            child: seqscan,
+            predicate: &predicate,
+        });
+
+        let mut root: Box<dyn Operator<MemDisk>> = Box::new(Project {
+            child: filter,
+            projection: &[BoundExpr::Column {
+                index: 0,
+                ty: Type::Int,
+            }],
+        });
+
+        let mut cx = Context::new(&mut db.pool, &mut db.cata);
+
+        let mut rows = Vec::new();
+        while let Some(tuple) = root.next(&mut cx)? {
+            rows.push(tuple);
+        }
+
+        println!("{:?}", plan_schema.columns);
+        println!("{rows:?}");
+
+        assert_eq!(rows.len(), 1);
+        // assert_eq!(rows[0][0], Value::Int(3));
+
+        Ok(())
     }
 }

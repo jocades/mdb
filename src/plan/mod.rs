@@ -30,6 +30,10 @@ pub enum Plan {
         child: Box<Plan>,
         predicate: BoundExpr,
     },
+    Delete {
+        tid: Arc<str>,
+        child: Box<Plan>,
+    },
 }
 
 impl Plan {
@@ -40,7 +44,7 @@ impl Plan {
     pub fn schema(&self) -> &Arc<Schema> {
         match self {
             Plan::OneRow => &EMPTY_SCHEMA,
-            Plan::Filter { child, .. } => child.schema(),
+            Plan::Filter { child, .. } | Plan::Delete { child, .. } => child.schema(),
             Plan::Scan { schema, .. }
             | Plan::Project { schema, .. }
             | Plan::Insert { schema, .. }

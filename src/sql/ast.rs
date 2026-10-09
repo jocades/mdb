@@ -9,6 +9,7 @@ pub enum Stmt {
     DropTable { name: Ident },
     Insert(Insert),
     Select(Select),
+    Delete(Delete),
 }
 
 #[derive(Debug)]
@@ -28,6 +29,12 @@ pub enum SelectItem {
 pub struct Select {
     pub cols: Vec<SelectItem>,
     pub from: Option<Ident>,
+    pub were: Option<Expr>,
+}
+
+#[derive(Debug)]
+pub struct Delete {
+    pub from: Ident,
     pub were: Option<Expr>,
 }
 

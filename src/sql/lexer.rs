@@ -16,9 +16,8 @@ pub enum Kind {
     Comma, Semi,
     LParen, RParen,
 
-
     Create, Drop, Table,
-    Select, From, Where,
+    Select, Delete, From, Where,
     Insert, Into, Values,
 
     True, False,
@@ -43,7 +42,8 @@ const _: () = assert!(Kind::COUNT <= 64);
 fn lookup_ident(lexeme: &str) -> Kind {
     match_case_insensitive!(lexeme,
         "create" => Kind::Create, "drop" => Kind::Drop, "table" => Kind::Table,
-        "select" => Kind::Select, "from" => Kind::From, "where" => Kind::Where,
+        "select" => Kind::Select, "delete" => Kind::Delete,
+        "from" => Kind::From, "where" => Kind::Where,
         "insert" => Kind::Insert, "into" => Kind::Into, "values" => Kind::Values,
         "true" => Kind::True, "false" => Kind::False,
         "and" => Kind::And, "or" => Kind::Or,

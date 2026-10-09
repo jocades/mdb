@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use super::ast::{self, BinOp, ColumnDef, Expr, Ident, Lit, SelectItem, Stmt};
+use super::ast::{self, ColumnDef, Expr, Ident, Lit, SelectItem, Stmt};
 use super::lexer::{self, Kind, Lexer, Span};
 use crate::value::Type;
 
 #[derive(Debug, derive_more::From)]
-#[allow(dead_code)]
 pub enum Error {
     #[from]
     Lex(lexer::Error),
@@ -61,45 +60,6 @@ pub fn parse_one(source: &str) -> Result<Stmt> {
     Parser::new(source, tokens).parse_one()
 }
 
-// Neat trick to remember the tokens we have been `eat()`ing using a bitset,
-// the idea is that 'what could have come here' is already known by the
-// parser: every optional contruct asks the question by calling `eat(kind)`
-// so recording the `failed asks` gives the answer for free instead of
-// having to handwrite all possible endings of a construct, credit to the
-// rust compiler since thats where I took the idea from.
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Expected(u64);
-
-impl Expected {
-    pub fn insert(&mut self, k: Kind) {
-        self.0 |= 1u64 << (k as u8);
-    }
-
-    pub fn clear(&mut self) {
-        self.0 = 0;
-    }
-
-    pub fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    pub fn len(self) -> usize {
-        self.0.count_ones() as usize
-    }
-
-    pub fn iter(self) -> impl Iterator<Item = Kind> {
-        let mut bits = self.0;
-        std::iter::from_fn(move || {
-            if bits == 0 {
-                return None;
-            }
-            let i = bits.trailing_zeros() as u8;
-            bits &= bits - 1;
-            Some(Kind::from_u8(i))
-        })
-    }
-}
-
 struct Parser<'a> {
     source: &'a str,
     tokens: Vec<Token>,
@@ -144,6 +104,7 @@ impl<'a> Parser<'a> {
         if self.eat(Kind::Create) { return self.create(); }
         if self.eat(Kind::Insert) { return self.insert(); }
         if self.eat(Kind::Select) { return self.select(); }
+        if self.eat(Kind::Delete) { return self.delete(); }
         if self.eat(Kind::Drop)   { return self.drop(); }
         Err(self.expect_error())
     }
@@ -201,6 +162,13 @@ impl<'a> Parser<'a> {
         let from = self.eat(Kind::From).then(|| self.ident()).transpose()?;
         let were = self.eat(Kind::Where).then(|| self.expr()).transpose()?;
         Ok(Stmt::Select(ast::Select { cols, from, were }))
+    }
+
+    fn delete(&mut self) -> Result<Stmt> {
+        self.expect(Kind::From)?;
+        let from = self.ident()?;
+        let were = self.eat(Kind::Where).then(|| self.expr()).transpose()?;
+        Ok(Stmt::Delete(ast::Delete { from, were }))
     }
 
     fn comma_sep<R>(&mut self, f: fn(&mut Self) -> Result<R>) -> Result<Vec<R>> {
@@ -356,6 +324,45 @@ impl<'a> Parser<'a> {
         Ok(Ident {
             lexeme: Arc::from(lexeme),
             span: t.span,
+        })
+    }
+}
+
+// Neat trick to remember the tokens we have been `eat()`ing using a bitset,
+// the idea is that 'what could have come here' is already known by the
+// parser: every optional contruct asks the question by calling `eat(kind)`
+// so recording the `failed asks` gives the answer for free instead of
+// having to handwrite all possible endings of a construct, credit to the
+// rust compiler since thats where I took the idea from.
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Expected(u64);
+
+impl Expected {
+    pub fn insert(&mut self, k: Kind) {
+        self.0 |= 1u64 << (k as u8);
+    }
+
+    pub fn clear(&mut self) {
+        self.0 = 0;
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn len(self) -> usize {
+        self.0.count_ones() as usize
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = Kind> {
+        let mut bits = self.0;
+        std::iter::from_fn(move || {
+            if bits == 0 {
+                return None;
+            }
+            let i = bits.trailing_zeros() as u8;
+            bits &= bits - 1;
+            Some(Kind::from_u8(i))
         })
     }
 }

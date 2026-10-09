@@ -5,7 +5,7 @@ use crate::exec::{self, Context};
 use crate::plan::{Plan, binder};
 use crate::sql::{self, ast::Stmt};
 use crate::storage::{DEFAULT_POOL_CAPACITY, Disk, FileDisk, MemDisk, Pool};
-use crate::value::{Tuple, Value};
+use crate::value::{Row, Value};
 
 pub struct Database<D: Disk> {
     pub pool: Pool<D>,
@@ -53,10 +53,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum QueryResult {
     None,
     Affected(usize),
-    Rows {
-        rows: Vec<Tuple>,
-        schema: Arc<Schema>,
-    },
+    Rows { rows: Vec<Row>, schema: Arc<Schema> },
 }
 
 impl<D: Disk> Database<D> {
@@ -95,28 +92,26 @@ impl<D: Disk> Database<D> {
                 let plan = binder::bind_select(&self.cata, &select)?;
                 self.run(&plan)
             }
+            Stmt::Delete(delete) => {
+                let plan = binder::bind_delete(&self.cata, &delete)?;
+                self.run(&plan)
+            }
         }
     }
 
     fn run(&mut self, plan: &Plan) -> Result<QueryResult> {
-        println!("{plan:#?}");
+        // println!("{plan:#?}");
         let mut root = exec::build::<D>(plan, &self.cata);
-        let mut cx = Context {
-            pool: &mut self.pool,
-            cata: &mut self.cata,
-        };
+        let mut cx = Context::new(&mut self.pool, &mut self.cata);
 
         let mut rows = Vec::new();
         while let Some(tuple) = root.next(&mut cx)? {
-            rows.push(tuple)
+            rows.push(tuple.row)
         }
 
-        Ok(match plan {
-            Plan::Insert { .. } => match rows[0][0] {
-                Value::Int(n) => QueryResult::Affected(n as usize),
-                _ => unreachable!(),
-            },
-            _ => QueryResult::Rows {
+        Ok(match cx.rows_affected {
+            Some(n) => QueryResult::Affected(n),
+            None => QueryResult::Rows {
                 rows,
                 schema: plan.schema().clone(),
             },
@@ -176,11 +171,11 @@ impl std::fmt::Display for QueryResult {
 
 struct Tabular<'a> {
     schema: &'a Schema,
-    tuples: &'a [Tuple],
+    tuples: &'a [Row],
 }
 
 impl<'a> Tabular<'a> {
-    fn new(schema: &'a Schema, tuples: &'a [Tuple]) -> Self {
+    fn new(schema: &'a Schema, tuples: &'a [Row]) -> Self {
         Self { schema, tuples }
     }
 }

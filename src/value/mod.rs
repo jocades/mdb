@@ -39,7 +39,7 @@ pub enum Value {
     String(Arc<str>),
 }
 
-pub type Tuple = Vec<Value>;
+pub type Row = Vec<Value>;
 
 impl Value {
     pub fn ty(&self) -> Type {
