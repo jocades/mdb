@@ -28,7 +28,7 @@ pub fn build<'p, D: Disk + 'p>(plan: &'p Plan, cata: &Catalog) -> Box<dyn Operat
             child: build(child, cata),
             projection,
         }),
-        Plan::Values { exprs } => Box::new(Values { exprs, index: 0 }),
+        Plan::Values { exprs, .. } => Box::new(Values { exprs, index: 0 }),
         Plan::Insert { tid, child, .. } => Box::new(Insert {
             tid,
             child: build(child, cata),

@@ -23,6 +23,7 @@ pub enum Kind {
     Insert, Into, Values,
 
     True, False,
+    And, Or,
 }
 
 fn lookup_ident(lexeme: &str) -> Kind {
@@ -31,6 +32,7 @@ fn lookup_ident(lexeme: &str) -> Kind {
         "select" => Kind::Select, "from" => Kind::From, "where" => Kind::Where,
         "insert" => Kind::Insert, "into" => Kind::Into, "values" => Kind::Values,
         "true" => Kind::True, "false" => Kind::False,
+        "and" => Kind::And, "or" => Kind::Or,
         _ => Kind::Ident,
     )
 }

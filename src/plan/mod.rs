@@ -19,6 +19,7 @@ pub enum Plan {
     },
     Values {
         exprs: Vec<Vec<BoundExpr>>,
+        schema: Arc<Schema>,
     },
     Insert {
         tid: Arc<str>,
@@ -35,7 +36,8 @@ impl Plan {
     // Each node knows its output schema, which is what the next node binds against
     pub fn schema(&self) -> &Arc<Schema> {
         match self {
-            Plan::OneRow | Plan::Values { .. } | Plan::Filter { .. } => &EMPTY_SCHEMA,
+            Plan::OneRow | Plan::Values { .. } => &EMPTY_SCHEMA,
+            Plan::Filter { child, .. } => child.schema(),
             Plan::Scan { schema, .. }
             | Plan::Project { schema, .. }
             | Plan::Insert { schema, .. } => schema,

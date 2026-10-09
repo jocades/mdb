@@ -110,6 +110,15 @@ pub fn bind_select(cata: &Catalog, select: &ast::Select) -> Result<Plan> {
         }
     };
 
+    if let Some(were) = &select.were {
+        let predicate = bind_expr(were, source.schema())?;
+        ensure!(predicate.ty() == Type::Bool, Error::WhereTypeMustBeBool);
+        source = Plan::Filter {
+            child: Box::new(source),
+            predicate,
+        };
+    }
+
     let mut projection = Vec::new();
     let mut schema = Schema::empty(); // output schema; built from the projection expressions
     for expr in &select.cols {
@@ -130,15 +139,6 @@ pub fn bind_select(cata: &Catalog, select: &ast::Select) -> Result<Plan> {
                 projection.push(bound);
             }
         }
-    }
-
-    if let Some(were) = &select.were {
-        let predicate = bind_expr(were, source.schema())?;
-        ensure!(predicate.ty() == Type::Bool, Error::WhereTypeMustBeBool);
-        source = Plan::Filter {
-            child: Box::new(source),
-            predicate,
-        };
     }
 
     Ok(Plan::Project {
@@ -178,7 +178,10 @@ pub fn bind_insert(cata: &Catalog, insert: &ast::Insert) -> Result<Plan> {
 
     Ok(Plan::Insert {
         tid: table.name.clone(),
-        child: Box::new(Plan::Values { exprs: vec![exprs] }),
+        child: Box::new(Plan::Values {
+            exprs: vec![exprs],
+            schema: table.schema.clone(),
+        }),
         schema: Arc::new(Schema::new_unchecked(vec![Column::new("count", Type::Int)])),
     })
 }
