@@ -61,6 +61,12 @@ pub fn parse_one(source: &str) -> Result<Stmt> {
     Parser::new(source, tokens).parse_one()
 }
 
+// Neat trick to remember the tokens we have been `eat()`ing using a bitset,
+// the idea is that 'what could have come here' is already known by the
+// parser: every optional contruct asks the question by calling `eat(kind)`
+// so recording the `failed asks` gives the answer for free instead of
+// having to handwrite all possible endings of a construct, credit to the
+// rust compiler since thats where I took the idea from.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Expected(u64);
 
@@ -220,34 +226,32 @@ impl<'a> Parser<'a> {
     }
 
     fn expr(&mut self) -> Result<Expr> {
-        self.eq()
+        self.or()
     }
 
+    // todo: seriously consider using a pratt parser for expressions,
+    // adding a new expr now means adding a new method; using pratt
+    // we would just have to add a new branch in a match...
     fn bin(&mut self, sub: fn(&mut Self) -> Result<Expr>, ops: &[Kind]) -> Result<Expr> {
         let mut expr = sub(self)?;
         loop {
-            let t = self.peek();
-            if !ops.contains(&t.kind) {
+            let op = self.peek();
+            if !ops.contains(&op.kind) {
                 break;
             }
             self.bump();
             let rhs = sub(self)?;
-            let op = match t.kind {
-                Kind::Eq => BinOp::Eq,
-                Kind::BangEq => BinOp::Ne,
-                Kind::Gt => BinOp::Gt,
-                Kind::GtEq => BinOp::Ge,
-                Kind::Lt => BinOp::Lt,
-                Kind::LtEq => BinOp::Le,
-                Kind::Plus => BinOp::Add,
-                Kind::Minus => BinOp::Sub,
-                Kind::Star => BinOp::Mul,
-                Kind::Slash => BinOp::Div,
-                _ => unreachable!(),
-            };
-            expr = Expr::Bin(Box::new(expr), op, Box::new(rhs));
+            expr = Expr::Bin(Box::new(expr), op.kind.into(), Box::new(rhs));
         }
         Ok(expr)
+    }
+
+    fn or(&mut self) -> Result<Expr> {
+        self.bin(Self::and, &[Kind::Or])
+    }
+
+    fn and(&mut self) -> Result<Expr> {
+        self.bin(Self::eq, &[Kind::And])
     }
 
     fn eq(&mut self) -> Result<Expr> {

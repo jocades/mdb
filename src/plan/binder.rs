@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::catalog::{Catalog, Column, EMPTY_SCHEMA, Schema};
-use crate::sql::ast::{self, BinOp, ColumnDef, Expr, Ident};
-use crate::value::Type;
+use crate::sql::ast::{self, BinOp, ColumnDef, Expr, Ident, Lit};
+use crate::value::{Type, Value};
 
 use super::Plan;
 use super::bound::BoundExpr;
@@ -58,7 +58,11 @@ pub fn bind_create_table(
 
 pub fn bind_expr(expr: &Expr, input: &Schema) -> Result<BoundExpr> {
     match expr {
-        Expr::Lit(lit) => Ok(BoundExpr::Lit(lit.into())),
+        Expr::Lit(lit) => Ok(BoundExpr::Const(match lit {
+            Lit::Int(n) => Value::Int(*n),
+            Lit::Bool(b) => Value::Bool(*b),
+            Lit::String(s) => Value::String(s.clone()),
+        })),
         Expr::Ident(name) => {
             let index = input
                 .index_of(&name.lexeme)
@@ -90,6 +94,7 @@ fn type_of_bin(op: BinOp, lhs: Type, rhs: Type) -> Option<Type> {
     use BinOp::*;
     match (op, lhs, rhs) {
         (Add | Sub | Mul | Div, Type::Int, Type::Int) => Some(Type::Int),
+        (And | Or, Type::Bool, Type::Bool) => Some(Type::Bool),
         (Eq | Ne | Gt | Ge | Lt | Le, a, b) if a == b => Some(Type::Bool),
         _ => None,
     }

@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
+use super::lexer::{Kind, Span};
 use crate::value::Type;
-
-use super::lexer::Span;
 
 #[derive(Debug)]
 pub enum Stmt {
@@ -68,4 +67,24 @@ pub enum BinOp {
     Eq, Ne,
     Gt, Ge,
     Lt, Le,
+}
+
+impl From<Kind> for BinOp {
+    fn from(kind: Kind) -> Self {
+        match kind {
+            Kind::Plus => BinOp::Add,
+            Kind::Minus => BinOp::Sub,
+            Kind::Star => BinOp::Mul,
+            Kind::Slash => BinOp::Div,
+            Kind::And => BinOp::And,
+            Kind::Or => BinOp::Or,
+            Kind::Eq => BinOp::Eq,
+            Kind::BangEq => BinOp::Ne,
+            Kind::Gt => BinOp::Gt,
+            Kind::GtEq => BinOp::Ge,
+            Kind::Lt => BinOp::Lt,
+            Kind::LtEq => BinOp::Le,
+            _ => unreachable!(),
+        }
+    }
 }

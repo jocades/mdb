@@ -99,6 +99,7 @@ impl<D: Disk> Database<D> {
     }
 
     fn run(&mut self, plan: &Plan) -> Result<QueryResult> {
+        println!("{plan:#?}");
         let mut root = exec::build::<D>(plan, &self.cata);
         let mut cx = Context {
             pool: &mut self.pool,
@@ -161,20 +162,37 @@ impl Sql<'_> {
 impl std::fmt::Display for QueryResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            QueryResult::None => f.write_str("OK"),
+            QueryResult::None => Ok(()),
             QueryResult::Affected(n) => write!(f, "{n} row(s) affected"),
             QueryResult::Rows { rows, schema } => {
                 if rows.len() != 0 {
-                    let mut b = tabled::builder::Builder::new();
-                    b.push_record(schema.columns.iter().map(|col| col.name.as_ref()));
-                    for row in rows {
-                        b.push_record(row.iter().map(ToString::to_string));
-                    }
-                    writeln!(f, "{}", b.build())?;
+                    writeln!(f, "{}", Tabular::new(schema, rows))?;
                 }
                 write!(f, "({} rows)", rows.len())
             }
         }
+    }
+}
+
+struct Tabular<'a> {
+    schema: &'a Schema,
+    tuples: &'a [Tuple],
+}
+
+impl<'a> Tabular<'a> {
+    fn new(schema: &'a Schema, tuples: &'a [Tuple]) -> Self {
+        Self { schema, tuples }
+    }
+}
+
+impl std::fmt::Display for Tabular<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut b = tabled::builder::Builder::new();
+        b.push_record(self.schema.columns.iter().map(|col| col.name.as_ref()));
+        self.tuples
+            .iter()
+            .for_each(|row| b.push_record(row.iter().map(|val| val.to_string())));
+        write!(f, "{}", b.build())
     }
 }
 

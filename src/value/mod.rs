@@ -24,21 +24,19 @@ impl Type {
         })
     }
 
+    #[allow(unused)]
     pub fn from_tag_unchecked(tag: u8) -> Self {
         debug_assert!(tag >= Type::Int as u8 && tag <= Type::Text as u8);
         unsafe { std::mem::transmute(tag) }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, derive_more::From, derive_more::Display)]
+#[derive(Debug, PartialEq, Eq, Clone, derive_more::Display)]
 #[display("{_0}")]
 pub enum Value {
-    #[from]
     Int(i64),
-    #[from]
     Bool(bool),
-    #[from(&str, Arc<str>)]
-    Text(Arc<str>),
+    String(Arc<str>),
 }
 
 pub type Tuple = Vec<Value>;
@@ -48,19 +46,18 @@ impl Value {
         match self {
             Value::Int(_) => Type::Int,
             Value::Bool(_) => Type::Bool,
-            Value::Text(_) => Type::Text,
+            Value::String(_) => Type::Text,
         }
     }
 }
 
-use crate::sql::ast::Lit;
-
-impl From<&Lit> for Value {
-    fn from(lit: &Lit) -> Self {
-        match lit {
-            Lit::Int(n) => Value::Int(*n),
-            Lit::Bool(b) => Value::Bool(*b),
-            Lit::String(s) => Value::Text(s.clone()),
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Int(a), Value::Int(b)) => a.partial_cmp(b),
+            (Self::Bool(a), Value::Bool(b)) => a.partial_cmp(b),
+            (Self::String(a), Value::String(b)) => a.partial_cmp(b),
+            _ => None,
         }
     }
 }

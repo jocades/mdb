@@ -10,7 +10,7 @@ pub fn encode(schema: &Schema, tuple: &[Value]) -> Vec<u8> {
         match (col.ty, val) {
             (Type::Int, Value::Int(n)) => buf.write_i64(*n),
             (Type::Bool, Value::Bool(b)) => buf.write_u8(*b as u8),
-            (Type::Text, Value::Text(s)) => {
+            (Type::Text, Value::String(s)) => {
                 assert!(s.len() <= u16::MAX as usize);
                 buf.write_u16(s.len() as u16);
                 buf.write_slice(s.as_bytes());
@@ -30,7 +30,7 @@ pub fn decode(schema: &Schema, mut buf: &[u8]) -> Vec<Value> {
             Type::Text => {
                 let len = buf.read_u16() as usize;
                 let s = buf.read_str(len);
-                Value::Text(s.into())
+                Value::String(s.into())
             }
         })
     }
@@ -53,7 +53,7 @@ mod tests {
         let tuple = vec![
             Value::Int(42),
             Value::Bool(true),
-            Value::Text("alpha".into()),
+            Value::String("alpha".into()),
         ];
 
         assert_eq!(decode(&schema, &encode(&schema, &tuple)), tuple);

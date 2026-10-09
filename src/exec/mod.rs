@@ -1,10 +1,14 @@
+mod eval;
+
 use std::{io, mem};
 
 use crate::catalog::{self, Catalog, Schema};
 use crate::heap::HeapScan;
-use crate::plan::{BoundExpr, EvalError, Plan};
+use crate::plan::{BoundExpr, Plan};
 use crate::storage::{Disk, Pool};
 use crate::value::{Tuple, Value, codec};
+
+pub use eval::{EvalError, eval};
 
 pub struct Context<'a, D: Disk> {
     pub pool: &'a mut Pool<D>,
@@ -85,7 +89,7 @@ struct Filter<'p, D: Disk> {
 impl<D: Disk> Operator<D> for Filter<'_, D> {
     fn next(&mut self, cx: &mut Context<D>) -> Result<Option<Tuple>, Error> {
         while let Some(tuple) = self.child.next(cx)? {
-            if self.predicate.eval(&tuple)? == Value::Bool(true) {
+            if eval(self.predicate, &tuple)? == Value::Bool(true) {
                 return Ok(Some(tuple));
             }
         }
@@ -107,7 +111,7 @@ impl<D: Disk> Operator<D> for Project<'_, D> {
         let out = self
             .projection
             .iter()
-            .map(|expr| expr.eval(&tuple))
+            .map(|expr| eval(expr, &tuple))
             .collect::<Result<_, _>>()?;
 
         Ok(Some(out))
@@ -127,7 +131,7 @@ impl<D: Disk> Operator<D> for Values<'_> {
         self.index += 1;
         let tuple = exprs
             .iter()
-            .map(|expr| expr.eval(&[]))
+            .map(|expr| eval(expr, &[]))
             .collect::<Result<_, _>>()?;
         Ok(Some(tuple))
     }

@@ -1,6 +1,6 @@
 pub mod binder;
 mod bound;
-pub use bound::{BoundExpr, EvalError};
+pub use bound::BoundExpr;
 
 use crate::catalog::{EMPTY_SCHEMA, Schema};
 use std::sync::Arc;
@@ -33,14 +33,18 @@ pub enum Plan {
 }
 
 impl Plan {
-    // Each node knows its output schema, which is what the next node binds against
+    /// Get the output schema of this node.
+    ///
+    /// Every plan node exposes the schema of the rows it produces,
+    /// regardless of how those rows are generated.
     pub fn schema(&self) -> &Arc<Schema> {
         match self {
-            Plan::OneRow | Plan::Values { .. } => &EMPTY_SCHEMA,
+            Plan::OneRow => &EMPTY_SCHEMA,
             Plan::Filter { child, .. } => child.schema(),
             Plan::Scan { schema, .. }
             | Plan::Project { schema, .. }
-            | Plan::Insert { schema, .. } => schema,
+            | Plan::Insert { schema, .. }
+            | Plan::Values { schema, .. } => schema,
         }
     }
 }

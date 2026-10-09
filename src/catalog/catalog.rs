@@ -117,7 +117,7 @@ pub fn encode(name: &str, first_page: PageId, cols: &[Column]) -> Vec<u8> {
     for col in cols {
         buf.write_u16(col.name.len() as u16);
         buf.write_slice(col.name.as_bytes());
-        buf.write_u8(col.ty as u8);
+        buf.write_u8(col.ty.tag());
     }
     buf
 }

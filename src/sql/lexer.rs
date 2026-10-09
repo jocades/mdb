@@ -34,7 +34,7 @@ impl Kind {
         assert!((n as usize) < Self::COUNT);
         // SAFETY: Kind is #[repr(u8)] and fieldless with no explicit
         // discriminants, so its values are exactly 0..COUNT, and n is in range.
-        unsafe { std::mem::transmute::<u8, Kind>(n) }
+        unsafe { std::mem::transmute(n) }
     }
 }
 
