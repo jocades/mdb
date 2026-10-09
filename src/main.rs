@@ -133,7 +133,10 @@ fn report(err: database::Error, src: &str) {
 
 fn report_parse_error(err: sql::parser::Error, src: &str) {
     use ariadne::{Label, Report, ReportKind, Source};
-    use sql::{lexer, parser::Error};
+    use sql::{
+        lexer::{self},
+        parser::Error,
+    };
     use std::fmt::Write;
     match err {
         Error::Expected {
@@ -142,16 +145,20 @@ fn report_parse_error(err: sql::parser::Error, src: &str) {
             span,
         } => {
             let mut m = "expected ".to_string();
-            if expected.len() > 1 {
-                m.push_str("one of ");
-                for (i, exp) in expected.iter().enumerate() {
-                    _ = write!(m, "`{exp:?}`");
-                    if i != expected.len() - 1 {
-                        m.push_str(", ");
+            match expected.len() {
+                0 => unreachable!(),
+                1 => {
+                    _ = write!(m, "{:?}", expected.iter().last().unwrap());
+                }
+                _ => {
+                    m.push_str("one of ");
+                    for (i, exp) in expected.iter().enumerate() {
+                        _ = write!(m, "`{exp:?}`");
+                        if i != expected.len() - 1 {
+                            m.push_str(", ");
+                        }
                     }
                 }
-            } else {
-                _ = write!(m, "{:?}", expected[0]);
             }
             _ = write!(m, " but found `{found:?}`");
             simple(m, span, src);
@@ -163,7 +170,6 @@ fn report_parse_error(err: sql::parser::Error, src: &str) {
             span,
             src,
         ),
-        Error::UnexpectedEof(span) => simple(format!("unexpected end of file"), span, src),
         Error::Lex(error) => match error {
             lexer::Error::UnexpectedCharacter { ch, at } => {
                 simple(

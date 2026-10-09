@@ -158,12 +158,6 @@ impl Sql<'_> {
     }
 }
 
-fn test() {
-    // let args = format_args!("select * from t where n = {}", 1);
-    // println!("{}", args)
-    // format!();
-}
-
 impl std::fmt::Display for QueryResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -184,18 +178,6 @@ impl std::fmt::Display for QueryResult {
     }
 }
 
-struct Timeit(std::time::Instant);
-
-fn timeit() -> Timeit {
-    Timeit(std::time::Instant::now())
-}
-
-impl Drop for Timeit {
-    fn drop(&mut self) {
-        println!("took {:?}", self.0.elapsed());
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,16 +193,19 @@ mod tests {
         Database::with_disk(FileDisk::temp().unwrap(), POOL_CAP).unwrap()
     }
 
+    struct Timeit(Instant);
+
+    impl Drop for Timeit {
+        fn drop(&mut self) {
+            println!("took {:?}", self.0.elapsed());
+        }
+    }
+
     macro_rules! timeit {
         ($($arg:tt)*) => {{
             let _span = Timeit(Instant::now());
             $($arg)*
         }};
-        // ($db:expr, $($arg:tt)*) => {{
-                               //     let start = Instant::now();
-                               //     let res = sql!($($arg)*).execute(&mut $db)?;
-                               //     (res, start.elapsed())
-                               // }};
     }
 
     fn bulk_insert(db: &mut Database<impl Disk>, count: usize) {
@@ -229,27 +214,6 @@ mod tests {
                 .execute(db)
                 .unwrap();
         }
-    }
-
-    #[test]
-    #[ignore]
-    fn executor() -> Result<()> {
-        let mut db = mem_db();
-        // println!("{res}, took {:?}", start.elapsed());
-        sql!("create table t (s text, n int, b bool)").execute(&mut db)?;
-        // let (res, took) = timeit!(db, "insert into t values ('foo', {}, true)", 1);
-        // println!("{res}, took {took:?}");
-        {
-            let _t = timeit();
-            for n in 1..=20 {
-                sql!("insert into t values ('foo', {n}, true)").execute(&mut db)?;
-            }
-        }
-
-        // let start = Instant::now();
-        // let res = sql!("select * from t").execute(&mut db)?;
-        // println!("{res}, took {:?}", start.elapsed());
-        Ok(())
     }
 
     #[test]

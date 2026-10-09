@@ -83,7 +83,6 @@ pub fn bind_expr(expr: &Expr, input: &Schema) -> Result<BoundExpr> {
                 ty,
             })
         }
-        Expr::Wildcard => unreachable!("expanded by the select binder"),
     }
 }
 
@@ -121,15 +120,15 @@ pub fn bind_select(cata: &Catalog, select: &ast::Select) -> Result<Plan> {
 
     let mut projection = Vec::new();
     let mut schema = Schema::empty(); // output schema; built from the projection expressions
-    for expr in &select.cols {
-        match expr {
-            Expr::Wildcard => {
+    for item in &select.cols {
+        match item {
+            ast::SelectItem::Wildcard => {
                 for (index, col) in source.schema().columns.iter().enumerate() {
                     projection.push(BoundExpr::Column { index, ty: col.ty });
                     schema.add_column(col.name.clone(), col.ty);
                 }
             }
-            _ => {
+            ast::SelectItem::Expr { expr, .. } => {
                 let bound = bind_expr(expr, source.schema())?;
                 let name = match expr {
                     Expr::Ident(ident) => ident.lexeme.clone(),

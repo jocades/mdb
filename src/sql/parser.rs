@@ -1,7 +1,6 @@
-#![allow(dead_code)]
 use std::sync::Arc;
 
-use super::ast::{self, BinOp, ColumnDef, Expr, Ident, Lit, Stmt};
+use super::ast::{self, BinOp, ColumnDef, Expr, Ident, Lit, SelectItem, Stmt};
 use super::lexer::{self, Kind, Lexer, Span};
 use crate::value::Type;
 
@@ -11,14 +10,13 @@ pub enum Error {
     #[from]
     Lex(lexer::Error),
     Expected {
-        expected: Vec<Kind>,
+        expected: Expected,
         found: Kind,
         span: Span,
     },
     ExpectedExpression(Span),
     ExpectedType(Span),
     UnknwonType(Span),
-    UnexpectedEof(Span),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -53,41 +51,75 @@ fn lex(src: &str) -> Result<Vec<Token>> {
 
 pub fn parse(source: &str) -> Result<Vec<Stmt>> {
     let tokens = lex(source)?;
-    Parser {
-        source,
-        tokens,
-        cursor: 0,
-    }
-    .parse()
+    Parser::new(source, tokens).parse()
 }
 
 pub fn parse_one(source: &str) -> Result<Stmt> {
     // todo: this is wasteful since there might be more
     // than one statement and we are consuming all tokens
     let tokens = lex(source)?;
-    Parser {
-        source,
-        tokens,
-        cursor: 0,
+    Parser::new(source, tokens).parse_one()
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Expected(u64);
+
+impl Expected {
+    pub fn insert(&mut self, k: Kind) {
+        self.0 |= 1u64 << (k as u8);
     }
-    .parse_one()
+
+    pub fn clear(&mut self) {
+        self.0 = 0;
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn len(self) -> usize {
+        self.0.count_ones() as usize
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = Kind> {
+        let mut bits = self.0;
+        std::iter::from_fn(move || {
+            if bits == 0 {
+                return None;
+            }
+            let i = bits.trailing_zeros() as u8;
+            bits &= bits - 1;
+            Some(Kind::from_u8(i))
+        })
+    }
 }
 
 struct Parser<'a> {
     source: &'a str,
     tokens: Vec<Token>,
     cursor: usize,
+    expected: Expected,
 }
 
-impl Parser<'_> {
+impl<'a> Parser<'a> {
+    fn new(source: &'a str, tokens: Vec<Token>) -> Self {
+        Self {
+            source,
+            tokens,
+            cursor: 0,
+            expected: Expected::default(),
+        }
+    }
+
+    #[rustfmt::skip]
     fn parse(&mut self) -> Result<Vec<Stmt>> {
         let mut stmts = Vec::new();
 
-        while !self.is_eof() {
+        loop {
+            while self.eat(Kind::Semi) {}
+            if self.is_eof() { break; }
             let stmt = self.stmt()?;
-            if !self.is_eof() {
-                self.expect(Kind::Semi)?;
-            }
+            self.finish_stmt()?;
             stmts.push(stmt);
         }
 
@@ -96,64 +128,47 @@ impl Parser<'_> {
 
     fn parse_one(&mut self) -> Result<Stmt> {
         let stmt = self.stmt()?;
-        self.eat(Kind::Semi); // optional semicolon
-        ensure!(self.is_eof(), Error::UnexpectedEof(self.peek().span));
+        self.finish_stmt()?;
+        self.expect(Kind::Eof)?;
         Ok(stmt)
     }
 
+    #[rustfmt::skip]
     fn stmt(&mut self) -> Result<Stmt> {
-        let t = self.peek();
-        match t.kind {
-            Kind::Create => {
-                self.bump();
-                self.create()
-            }
-            Kind::Drop => {
-                self.bump();
-                self.drop()
-            }
-            Kind::Insert => {
-                self.bump();
-                self.insert()
-            }
-            Kind::Select => {
-                self.bump();
-                self.select()
-            }
-            _ => {
-                bail!(Error::Expected {
-                    expected: vec![Kind::Create, Kind::Drop, Kind::Insert, Kind::Select],
-                    found: t.kind,
-                    span: t.span,
-                });
-            }
-        }
+        if self.eat(Kind::Create) { return self.create(); }
+        if self.eat(Kind::Insert) { return self.insert(); }
+        if self.eat(Kind::Select) { return self.select(); }
+        if self.eat(Kind::Drop)   { return self.drop(); }
+        Err(self.expect_error())
+    }
+
+    fn finish_stmt(&mut self) -> Result<()> {
+        ensure!(self.eat(Kind::Semi) || self.is_eof(), self.expect_error());
+        Ok(())
     }
 
     fn create(&mut self) -> Result<Stmt> {
         self.expect(Kind::Table)?;
         let name = self.ident()?;
         self.expect(Kind::LParen)?;
-        let mut defs = vec![];
-        loop {
-            let name = self.ident()?;
-            let t = self.peek();
-            ensure!(t.kind == Kind::Ident, Error::ExpectedType(t.span));
-            let lexeme = t.lexeme(self.source);
-            let ty = match_case_insensitive!(lexeme,
-                "int" => Type::Int,
-                "bool" => Type::Bool,
-                "text" => Type::Text,
-                _ => bail!(Error::UnknwonType(t.span)),
-            );
-            self.bump();
-            defs.push(ColumnDef { name, ty });
-            if !self.eat(Kind::Comma) {
-                break;
-            }
-        }
+        let defs = self.comma_sep(Self::column_def)?;
         self.expect(Kind::RParen)?;
         Ok(Stmt::CreateTable { name, defs })
+    }
+
+    fn column_def(&mut self) -> Result<ColumnDef> {
+        let name = self.ident()?;
+        let t = self.peek();
+        ensure!(t.kind == Kind::Ident, Error::ExpectedType(t.span));
+        let lexeme = t.lexeme(self.source);
+        let ty = match_case_insensitive!(lexeme,
+            "int" => Type::Int,
+            "bool" => Type::Bool,
+            "text" => Type::Text,
+            _ => bail!(Error::UnknwonType(t.span)),
+        );
+        self.bump();
+        Ok(ColumnDef { name, ty })
     }
 
     fn drop(&mut self) -> Result<Stmt> {
@@ -167,40 +182,37 @@ impl Parser<'_> {
         let into = self.ident()?;
         self.expect(Kind::Values)?;
         self.expect(Kind::LParen)?;
-        let vals = self.expr_list()?;
+        let vals = self.comma_sep(Self::expr)?;
         self.expect(Kind::RParen)?;
         Ok(Stmt::Insert(ast::Insert { into, vals }))
     }
 
     fn select(&mut self) -> Result<Stmt> {
-        let cols = self.expr_list()?;
-        let t = self.peek();
-        let from = match t.kind {
-            Kind::From => {
-                self.bump();
-                Some(self.ident()?)
-            }
-            Kind::Semi => None,
-            _ => bail!(Error::Expected {
-                expected: vec![Kind::From, Kind::Semi],
-                found: t.kind,
-                span: t.span,
-            }),
-        };
-
+        let cols = self.comma_sep(Self::select_item)?;
+        let from = self.eat(Kind::From).then(|| self.ident()).transpose()?;
         let were = self.eat(Kind::Where).then(|| self.expr()).transpose()?;
-
         Ok(Stmt::Select(ast::Select { cols, from, were }))
     }
 
-    #[rustfmt::skip]
-    fn expr_list(&mut self) -> Result<Vec<Expr>> {
-        let mut exprs = Vec::new();
+    fn comma_sep<R>(&mut self, f: fn(&mut Self) -> Result<R>) -> Result<Vec<R>> {
+        let mut out = Vec::new();
         loop {
-            exprs.push(self.expr()?);
-            if !self.eat(Kind::Comma) { break; }
+            out.push(f(self)?);
+            if !self.eat(Kind::Comma) {
+                break;
+            }
         }
-        Ok(exprs)
+        Ok(out)
+    }
+
+    fn select_item(&mut self) -> Result<SelectItem> {
+        if self.eat(Kind::Star) {
+            return Ok(SelectItem::Wildcard);
+        }
+        Ok(SelectItem::Expr {
+            expr: self.expr()?,
+            alias: None,
+        })
     }
 
     fn expr(&mut self) -> Result<Expr> {
@@ -271,7 +283,6 @@ impl Parser<'_> {
                     span: t.span,
                 })
             }
-            Kind::Star => Expr::Wildcard,
             Kind::LParen => {
                 self.bump();
                 let expr = self.expr()?;
@@ -291,44 +302,44 @@ impl Parser<'_> {
         self.tokens[self.cursor]
     }
 
-    fn bump(&mut self) {
-        if !self.is_eof() {
-            self.cursor += 1;
-        }
+    fn is_eof(&mut self) -> bool {
+        self.check(Kind::Eof)
     }
 
+    #[rustfmt::skip]
+    fn check(&mut self, kind: Kind) -> bool {
+        let hit = self.peek().kind == kind;
+        if !hit { self.expected.insert(kind); }
+        hit
+    }
+
+    #[rustfmt::skip]
+    fn bump(&mut self) -> Token {
+        self.expected.clear();
+        let t = self.peek();
+        if t.kind != Kind::Eof { self.cursor += 1; }
+        t
+    }
+
+    #[rustfmt::skip]
     fn eat(&mut self, kind: Kind) -> bool {
-        if self.peek().kind != kind {
-            return false;
-        }
-        self.bump();
-        true
+        let hit = self.check(kind);
+        if hit { self.bump(); }
+        hit
     }
-
-    // fn prev(&self) -> Token {
-    //     self.tokens[self.cursor - 1]
-    // }
-
-    fn is_eof(&self) -> bool {
-        self.peek().kind == Kind::Eof
-    }
-
-    // fn matches(&mut self, kind: Kind) -> bool {}
 
     fn expect(&mut self, kind: Kind) -> Result<Token> {
+        ensure!(self.check(kind), self.expect_error());
+        Ok(self.bump())
+    }
+
+    fn expect_error(&self) -> Error {
         let t = self.peek();
-        if t.kind != kind {
-            bail!(match t.kind {
-                Kind::Eof => Error::UnexpectedEof(t.span),
-                _ => Error::Expected {
-                    expected: vec![kind],
-                    found: t.kind,
-                    span: t.span,
-                },
-            });
-        };
-        self.bump();
-        Ok(t)
+        Error::Expected {
+            expected: self.expected,
+            found: t.kind,
+            span: t.span,
+        }
     }
 
     fn ident(&mut self) -> Result<Ident> {

@@ -19,8 +19,15 @@ pub struct Insert {
 }
 
 #[derive(Debug)]
+pub enum SelectItem {
+    Wildcard, // *
+    // QualifiedWildard(Idnet) // t.*
+    Expr { expr: Expr, alias: Option<Ident> },
+}
+
+#[derive(Debug)]
 pub struct Select {
-    pub cols: Vec<Expr>,
+    pub cols: Vec<SelectItem>,
     pub from: Option<Ident>,
     pub were: Option<Expr>,
 }
@@ -43,7 +50,6 @@ pub enum Expr {
     Lit(Lit),
     Ident(Ident),
     Bin(Box<Expr>, BinOp, Box<Expr>),
-    Wildcard, // *
 }
 
 #[derive(Debug)]
@@ -58,6 +64,7 @@ pub enum Lit {
 pub enum BinOp {
     Add, Sub,
     Mul, Div,
+    And, Or,
     Eq, Ne,
     Gt, Ge,
     Lt, Le,

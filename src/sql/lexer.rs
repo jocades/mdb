@@ -1,10 +1,9 @@
 use std::{fmt, ops};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[rustfmt::skip]
 pub enum Kind {
-    Eof,
-
     Ident, Number, String,
 
     Plus, Minus,
@@ -24,7 +23,22 @@ pub enum Kind {
 
     True, False,
     And, Or,
+
+    Eof, // MUST stay last: COUNT is derived from it
 }
+
+impl Kind {
+    pub const COUNT: usize = Kind::Eof as usize + 1;
+
+    pub fn from_u8(n: u8) -> Kind {
+        assert!((n as usize) < Self::COUNT);
+        // SAFETY: Kind is #[repr(u8)] and fieldless with no explicit
+        // discriminants, so its values are exactly 0..COUNT, and n is in range.
+        unsafe { std::mem::transmute::<u8, Kind>(n) }
+    }
+}
+
+const _: () = assert!(Kind::COUNT <= 64);
 
 fn lookup_ident(lexeme: &str) -> Kind {
     match_case_insensitive!(lexeme,
