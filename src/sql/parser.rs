@@ -292,15 +292,15 @@ impl<'a> Parser<'a> {
         self.tokens[self.cursor]
     }
 
-    fn is_eof(&mut self) -> bool {
-        self.check(Kind::Eof)
-    }
-
     #[rustfmt::skip]
     fn check(&mut self, kind: Kind) -> bool {
         let hit = self.peek().kind == kind;
         if !hit { self.expected.insert(kind); }
         hit
+    }
+
+    fn is_eof(&mut self) -> bool {
+        self.check(Kind::Eof)
     }
 
     #[rustfmt::skip]

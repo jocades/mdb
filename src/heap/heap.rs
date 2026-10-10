@@ -56,15 +56,7 @@ impl Heap {
         })
     }
 
-    /// New empty table from an already allocated page, caller guarantees the page is valid
-    // pub fn init(first: PageId) -> Self {
-    //     HeapPage::init(first);
-    //     Self { first, last: first }
-    // }
-
     /// Open an existing table by walking the chain once to find the last page.
-    /// This is **very ineficient** but it can be solved by storing both the first and last page
-    /// in the catalog
     #[rustfmt::skip]
     pub fn open(pool: &mut Pool<impl Disk>, first: PageId) -> io::Result<Self> {
         let mut current = first;

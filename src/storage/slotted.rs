@@ -286,23 +286,3 @@ impl SlottedPage {
         self.buf.put_u16(GARBAGE, 0);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn foo() {
-        const N: usize = 32;
-        let mut buf = [0u8; N];
-
-        let p = SlottedPage::init(&mut buf, 1);
-        let a = dbg!(p.insert(b"ab").unwrap());
-        dbg!(p.contiguous_free());
-        let b = dbg!(p.insert(b"cd").unwrap());
-        dbg!(p.contiguous_free());
-        p.delete(b);
-        dbg!(p.garbage(), p.contiguous_free(), p.reclaimable_free());
-        dbg!(p.insert(b"cd").unwrap());
-    }
-}
