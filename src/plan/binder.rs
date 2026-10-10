@@ -14,6 +14,7 @@ pub enum Error {
     DuplicateColumn(Ident),
     TableNotFound(Ident),
     ColumnNotFound(Ident),
+    FunctionNotFound(Ident),
     InvalidOperands {
         op: BinOp,
         lty: Type,
@@ -87,6 +88,29 @@ pub fn bind_expr(expr: &Expr, scope: &Schema) -> Result<BoundExpr> {
                 ty,
             })
         }
+        Expr::Call(name, args) => bind_call(name, args, scope),
+    }
+}
+
+fn bind_call(name: &Ident, args: &[Expr], scope: &Schema) -> Result<BoundExpr> {
+    let builtin = lookup(&name.lexeme).ok_or_else(|| Error::FunctionNotFound(name.clone()))?;
+    match builtin {
+        Builtin::Scalar(scalar) => match scalar {
+            Scalar::Upper => {
+                assert!(args.len() == 1, "function arity mismatch");
+                let arg = bind_expr(&args[0], scope)?;
+                assert!(arg.ty() == Type::Text, "argument type mismatch");
+                Ok(BoundExpr::Call {
+                    fun: |args| match &args[0] {
+                        Value::String(s) => Value::String(s.to_uppercase().into()),
+                        _ => unreachable!(),
+                    },
+                    args: vec![arg],
+                    ty: Type::Text,
+                })
+            }
+        },
+        Builtin::Aggregate(_agg) => todo!(),
     }
 }
 
@@ -260,5 +284,36 @@ pub fn bind_delete(cata: &Catalog, del: &ast::Delete) -> Result<Plan> {
     Ok(Plan::Delete {
         tid: table.name.clone(),
         child: Box::new(source),
+    })
+}
+
+enum Builtin {
+    Scalar(Scalar),
+    Aggregate(Aggregate),
+}
+
+enum Scalar {
+    Upper,
+}
+
+enum Aggregate {}
+
+impl Builtin {
+    // (arity, ret ty)
+    fn ty(&self) -> (usize, Type) {
+        match self {
+            Builtin::Scalar(scalar) => match scalar {
+                Scalar::Upper => (1, Type::Int),
+            },
+            Builtin::Aggregate(_aggregate) => todo!(),
+        }
+    }
+}
+
+#[rustfmt::skip]
+fn lookup(name: &str) -> Option<Builtin> {
+    Some(match name {
+        "upper" => Builtin::Scalar(Scalar::Upper),
+        _ => return None,
     })
 }

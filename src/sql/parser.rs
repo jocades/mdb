@@ -249,7 +249,21 @@ impl<'a> Parser<'a> {
     }
 
     fn factor(&mut self) -> Result<Expr> {
-        self.bin(Self::primary, &[Kind::Star, Kind::Slash])
+        self.bin(Self::call, &[Kind::Star, Kind::Slash])
+    }
+
+    fn call(&mut self) -> Result<Expr> {
+        match self.primary()? {
+            Expr::Ident(name) if self.eat(Kind::LParen) => {
+                // todo: limit number of allowed arguments
+                let maybe_args = (!self.check(Kind::LParen))
+                    .then(|| self.comma_sep(Self::expr))
+                    .transpose()?;
+                self.expect(Kind::RParen)?;
+                Ok(Expr::Call(name, maybe_args.unwrap_or_default()))
+            }
+            expr => Ok(expr),
+        }
     }
 
     fn primary(&mut self) -> Result<Expr> {

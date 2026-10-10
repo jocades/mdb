@@ -102,6 +102,9 @@ fn report(err: database::Error, src: &str) {
             plan::binder::Error::ColumnNotFound(ident) => {
                 simple(format!("no such column `{ident}`"), ident.span, src)
             }
+            plan::binder::Error::FunctionNotFound(ident) => {
+                simple(format!("no such function `{ident}`"), ident.span, src)
+            }
             plan::binder::Error::InvalidOperands { op, lty, rty } => {
                 println!("error: invalid operator `{op:?}` for `{lty:?}` and `{rty:?}`");
             }

@@ -14,13 +14,21 @@ pub enum BoundExpr {
         rhs: Box<BoundExpr>,
         ty: Type,
     },
+    // only support builtins for now
+    Call {
+        fun: fn(&[Value]) -> Value,
+        args: Vec<BoundExpr>,
+        ty: Type,
+    },
 }
 
 impl BoundExpr {
     pub fn ty(&self) -> Type {
         match self {
             BoundExpr::Const(v) => v.ty(),
-            BoundExpr::Column { ty, .. } | BoundExpr::Bin { ty, .. } => *ty,
+            BoundExpr::Column { ty, .. }
+            | BoundExpr::Bin { ty, .. }
+            | BoundExpr::Call { ty, .. } => *ty,
         }
     }
 }

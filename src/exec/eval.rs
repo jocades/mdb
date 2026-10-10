@@ -42,6 +42,14 @@ pub fn eval(expr: &BoundExpr, env: &[Value]) -> Result<Value, EvalError> {
             let rhs = eval(rhs, env)?;
             compute(*op, lhs, rhs)
         }
+
+        BoundExpr::Call { fun, args, .. } => {
+            let args = args
+                .iter()
+                .map(|arg| eval(arg, env))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(fun(&args))
+        }
     }
 }
 

@@ -63,6 +63,7 @@ pub enum Expr {
     Lit(Lit),
     Ident(Ident),
     Bin(Box<Expr>, BinOp, Box<Expr>),
+    Call(Ident, Vec<Expr>),
 }
 
 #[derive(Debug)]
