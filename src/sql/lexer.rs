@@ -19,6 +19,7 @@ pub enum Kind {
     Create, Drop, Table,
     Select, Delete, From, Where,
     Insert, Into, Values,
+    Update, Set,
 
     True, False,
     And, Or,
@@ -45,6 +46,7 @@ fn lookup_ident(lexeme: &str) -> Kind {
         "select" => Kind::Select, "delete" => Kind::Delete,
         "from" => Kind::From, "where" => Kind::Where,
         "insert" => Kind::Insert, "into" => Kind::Into, "values" => Kind::Values,
+        "update" => Kind::Update, "set" => Kind::Set,
         "true" => Kind::True, "false" => Kind::False,
         "and" => Kind::And, "or" => Kind::Or,
         _ => Kind::Ident,

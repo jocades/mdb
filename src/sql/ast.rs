@@ -9,6 +9,7 @@ pub enum Stmt {
     DropTable { name: Ident },
     Insert(Insert),
     Select(Select),
+    Update(Update),
     Delete(Delete),
 }
 
@@ -19,13 +20,6 @@ pub struct Insert {
 }
 
 #[derive(Debug)]
-pub enum SelectItem {
-    Wildcard, // *
-    // QualifiedWildard(Idnet) // t.*
-    Expr { expr: Expr, alias: Option<Ident> },
-}
-
-#[derive(Debug)]
 pub struct Select {
     pub cols: Vec<SelectItem>,
     pub from: Option<Ident>,
@@ -33,9 +27,22 @@ pub struct Select {
 }
 
 #[derive(Debug)]
+pub struct Update {
+    pub what: Ident,
+    pub sets: Vec<(Ident, Expr)>,
+    pub were: Option<Expr>,
+}
+
+#[derive(Debug)]
 pub struct Delete {
     pub from: Ident,
     pub were: Option<Expr>,
+}
+
+#[derive(Debug)]
+pub enum SelectItem {
+    Wildcard,
+    Expr { expr: Expr, alias: Option<Ident> },
 }
 
 #[derive(Debug)]

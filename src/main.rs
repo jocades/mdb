@@ -11,7 +11,7 @@ mod sql;
 mod storage;
 mod value;
 
-use database::{Database, QueryResult};
+use database::Database;
 use repl::{Command, Input};
 use storage::{DEFAULT_POOL_CAPACITY, Disk};
 
@@ -127,7 +127,7 @@ fn report(err: database::Error, src: &str) {
                 println!("error: where type must be boolean");
             }
         },
-        Error::Io(_) | Error::Catalog(_) | Error::Exec(_) => println!("error: {err:?}"),
+        Error::Io(_) | Error::Exec(_) => println!("error: {err:?}"),
     }
 }
 

@@ -1,10 +1,8 @@
-use std::sync::Arc;
+use std::{io, sync::Arc};
 
 use crate::heap::{Heap, Rid};
 use crate::storage::{Disk, Pool};
 use crate::value::{Type, Value, codec};
-
-use super::Error;
 
 /// A named schema backed by a heap. This is what the catalog hands out.
 #[derive(Debug)]
@@ -16,12 +14,12 @@ pub struct Table {
 }
 
 impl Table {
-    pub fn insert(&mut self, pool: &mut Pool<impl Disk>, tuple: &[Value]) -> Result<Rid, Error> {
+    pub fn insert(&mut self, pool: &mut Pool<impl Disk>, tuple: &[Value]) -> io::Result<Rid> {
         let record = codec::encode(&self.schema, tuple);
         Ok(self.heap.insert(pool, &record)?)
     }
 
-    pub fn get(&self, pool: &mut Pool<impl Disk>, rid: Rid) -> Result<Option<Vec<Value>>, Error> {
+    pub fn get(&self, pool: &mut Pool<impl Disk>, rid: Rid) -> io::Result<Option<Vec<Value>>> {
         Ok(self
             .heap
             .get(pool, rid)?

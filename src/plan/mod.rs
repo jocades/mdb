@@ -34,6 +34,11 @@ pub enum Plan {
         tid: Arc<str>,
         child: Box<Plan>,
     },
+    Update {
+        tid: Arc<str>,
+        sets: Vec<(usize, BoundExpr)>,
+        child: Box<Plan>,
+    },
 }
 
 impl Plan {
@@ -44,7 +49,9 @@ impl Plan {
     pub fn schema(&self) -> &Arc<Schema> {
         match self {
             Plan::OneRow => &EMPTY_SCHEMA,
-            Plan::Filter { child, .. } | Plan::Delete { child, .. } => child.schema(),
+            Plan::Filter { child, .. }
+            | Plan::Delete { child, .. }
+            | Plan::Update { child, .. } => child.schema(),
             Plan::Scan { schema, .. }
             | Plan::Project { schema, .. }
             | Plan::Insert { schema, .. }

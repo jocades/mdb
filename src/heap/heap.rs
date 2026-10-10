@@ -20,17 +20,6 @@ impl Rid {
     }
 }
 
-#[derive(Debug, From)]
-pub enum Error {
-    NotFound(Rid),
-    RowTooLarge {
-        len: usize,
-        max: usize,
-    },
-    #[from(io::Error, Corrupt)]
-    Io(io::Error),
-}
-
 /**
 An unordered collection of variable-length records, stored as a singly
 linked chain of slotted pages.
@@ -102,14 +91,12 @@ impl Heap {
         HeapScan(Rid::new(self.first, 0))
     }
 
-    pub fn insert(&mut self, pool: &mut Pool<impl Disk>, record: &[u8]) -> Result<Rid, Error> {
-        const MAX_ROW: usize = 100;
+    // todo: overflow pages
+    const MAX_SIZE: usize = 100;
 
-        if record.len() > MAX_ROW {
-            bail!(Error::RowTooLarge {
-                len: record.len(),
-                max: MAX_ROW
-            })
+    pub fn insert(&mut self, pool: &mut Pool<impl Disk>, record: &[u8]) -> io::Result<Rid> {
+        if record.len() > Self::MAX_SIZE {
+            unimplemented!("overflow pages")
         }
 
         if let Some(slot) = try_insert(pool, self.last, record)? {
@@ -127,9 +114,28 @@ impl Heap {
         Ok(Rid::new(new, slot))
     }
 
-    pub fn delete(&mut self, pool: &mut Pool<impl Disk>, rid: Rid) -> Result<(), io::Error> {
+    pub fn delete(&mut self, pool: &mut Pool<impl Disk>, rid: Rid) -> io::Result<()> {
         pool.get_mut::<HeapPage>(rid.page)?.delete(rid.slot);
         Ok(())
+    }
+
+    /// If the row no longer fits in its page it moves and new `Rid` is returned
+    pub fn update(
+        &mut self,
+        pool: &mut Pool<impl Disk>,
+        rid: Rid,
+        record: &[u8],
+    ) -> io::Result<Option<Rid>> {
+        if record.len() > Self::MAX_SIZE {
+            unimplemented!("overflow pages")
+        }
+        let page = pool.get_mut::<HeapPage>(rid.page)?;
+        if page.update(rid.slot, record) {
+            return Ok(None);
+        }
+        let new = self.insert(pool, record)?;
+        self.delete(pool, rid)?;
+        Ok(Some(new))
     }
 
     /// Return every page to the free list.

@@ -5,7 +5,7 @@ use crate::heap::Heap;
 use crate::storage::{Disk, PageId, Pool};
 use crate::value::Type;
 
-use super::{Column, Error, Schema, Table};
+use super::{Column, Schema, Table};
 
 const CATALOG_ROOT: PageId = 1;
 
@@ -52,7 +52,7 @@ impl Catalog {
         pool: &mut Pool<impl Disk>,
         name: Arc<str>,
         schema: Schema,
-    ) -> Result<(), Error> {
+    ) -> io::Result<()> {
         debug_assert!(!self.tables.contains_key(&name));
 
         let heap = Heap::create(pool)?;
@@ -78,7 +78,7 @@ impl Catalog {
         Ok(())
     }
 
-    pub fn drop_table(&mut self, pool: &mut Pool<impl Disk>, name: &str) -> Result<(), Error> {
+    pub fn drop_table(&mut self, pool: &mut Pool<impl Disk>, name: &str) -> io::Result<()> {
         // delete the catalog record before freeing the pages.
         // if we crash in between, we leak pages, the reverse order would
         // leave the catalog pointing to freed pages, which is corruption,

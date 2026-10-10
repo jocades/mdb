@@ -104,6 +104,7 @@ impl<'a> Parser<'a> {
         if self.eat(Kind::Create) { return self.create(); }
         if self.eat(Kind::Insert) { return self.insert(); }
         if self.eat(Kind::Select) { return self.select(); }
+        if self.eat(Kind::Update) { return self.update(); }
         if self.eat(Kind::Delete) { return self.delete(); }
         if self.eat(Kind::Drop)   { return self.drop(); }
         Err(self.expect_error())
@@ -162,6 +163,19 @@ impl<'a> Parser<'a> {
         let from = self.eat(Kind::From).then(|| self.ident()).transpose()?;
         let were = self.eat(Kind::Where).then(|| self.expr()).transpose()?;
         Ok(Stmt::Select(ast::Select { cols, from, were }))
+    }
+
+    fn update(&mut self) -> Result<Stmt> {
+        let what = self.ident()?;
+        self.expect(Kind::Set)?;
+        let sets = self.comma_sep(|this| {
+            let name = this.ident()?;
+            this.expect(Kind::Eq)?;
+            let value = this.expr()?;
+            Ok((name, value))
+        })?;
+        let were = self.eat(Kind::Where).then(|| self.expr()).transpose()?;
+        Ok(Stmt::Update(ast::Update { what, sets, were }))
     }
 
     fn delete(&mut self) -> Result<Stmt> {

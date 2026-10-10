@@ -84,6 +84,12 @@ pub fn build<'p, D: Disk + 'p>(plan: &'p Plan, cata: &Catalog) -> Box<dyn Operat
             tid,
             done: false,
         }),
+        Plan::Update { tid, sets, child } => Box::new(Update {
+            tid,
+            sets,
+            child: build(child, cata),
+            done: false,
+        }),
     }
 }
 
@@ -93,11 +99,7 @@ pub enum Error {
     Io(io::Error),
     #[from]
     Eval(EvalError),
-    #[from]
-    Catalog(catalog::Error),
 }
-
-// type Result<T> = std::result::Result<T, Error>;
 
 struct OneRow {
     done: bool,
@@ -225,13 +227,48 @@ impl<D: Disk> Operator<D> for Delete<'_, D> {
 
         let mut rids = Vec::new();
         while let Some(tuple) = self.child.next(cx)? {
-            rids.push(tuple.rid.expect("need rid"));
+            rids.push(tuple.rid.expect("planned"));
         }
 
         let table = cx.cata.get_mut(self.tid).expect("bound");
         let affected = rids.len();
         for rid in rids {
             table.heap.delete(&mut cx.pool, rid)?;
+        }
+
+        cx.rows_affected = Some(affected);
+        Ok(Some(Tuple::empty()))
+    }
+}
+
+struct Update<'p, D> {
+    tid: &'p str,
+    child: Box<dyn Operator<D> + 'p>,
+    sets: &'p [(usize, BoundExpr)],
+    done: bool,
+}
+
+impl<D: Disk> Operator<D> for Update<'_, D> {
+    fn next(&mut self, cx: &mut Context<D>) -> Result<Option<Tuple>, Error> {
+        if mem::replace(&mut self.done, true) {
+            return Ok(None);
+        }
+
+        let mut updates = Vec::new();
+        while let Some(mut tuple) = self.child.next(cx)? {
+            for (index, expr) in self.sets {
+                tuple.row[*index] = eval(expr, &tuple.row)?;
+            }
+            updates.push(tuple);
+        }
+
+        let table = cx.cata.get_mut(self.tid).expect("bound");
+        let affected = updates.len();
+        for tuple in updates {
+            let record = codec::encode(&table.schema, &tuple.row);
+            table
+                .heap
+                .update(&mut cx.pool, tuple.rid.expect("planned"), &record)?;
         }
 
         cx.rows_affected = Some(affected);
@@ -249,7 +286,7 @@ mod tests {
     use crate::value::{Type, Value};
 
     #[test]
-    fn simple_select_with_no_filter() -> Result<(), crate::database::Error> {
+    fn simple_select_with_filter() -> Result<(), crate::database::Error> {
         // t = { x: int }
         // select x from t where y = 4;
         //

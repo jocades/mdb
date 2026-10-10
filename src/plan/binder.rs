@@ -56,7 +56,7 @@ pub fn bind_create_table(
     Ok((name.lexeme.clone(), Schema::new_unchecked(cols)))
 }
 
-pub fn bind_expr(expr: &Expr, input: &Schema) -> Result<BoundExpr> {
+pub fn bind_expr(expr: &Expr, scope: &Schema) -> Result<BoundExpr> {
     match expr {
         Expr::Lit(lit) => Ok(BoundExpr::Const(match lit {
             Lit::Int(n) => Value::Int(*n),
@@ -64,17 +64,17 @@ pub fn bind_expr(expr: &Expr, input: &Schema) -> Result<BoundExpr> {
             Lit::String(s) => Value::String(s.clone()),
         })),
         Expr::Ident(name) => {
-            let index = input
+            let index = scope
                 .index_of(&name.lexeme)
                 .ok_or_else(|| Error::ColumnNotFound(name.clone()))?;
 
             Ok(BoundExpr::Column {
                 index,
-                ty: input.columns[index].ty,
+                ty: scope.columns[index].ty,
             })
         }
         Expr::Bin(lhs, op, rhs) => {
-            let (lhs, rhs) = (bind_expr(lhs, input)?, bind_expr(rhs, input)?);
+            let (lhs, rhs) = (bind_expr(lhs, scope)?, bind_expr(rhs, scope)?);
             let (lty, rty) = (lhs.ty(), rhs.ty());
 
             let op = *op;
@@ -98,6 +98,48 @@ fn type_of_bin(op: BinOp, lhs: Type, rhs: Type) -> Option<Type> {
         (Eq | Ne | Gt | Ge | Lt | Le, a, b) if a == b => Some(Type::Bool),
         _ => None,
     }
+}
+
+pub fn bind_insert(cata: &Catalog, insert: &ast::Insert) -> Result<Plan> {
+    let table = cata
+        .get(&insert.into.lexeme)
+        .ok_or_else(|| Error::TableNotFound(insert.into.clone()))?;
+
+    let mut rows = Vec::with_capacity(insert.vals.len());
+    for row in &insert.vals {
+        ensure!(
+            row.len() == table.schema.columns.len(),
+            Error::ArityMismatch {
+                table: insert.into.clone(),
+                expected: table.schema.columns.len() as u16,
+                found: row.len() as u16,
+            }
+        );
+
+        let mut exprs = Vec::with_capacity(table.schema.columns.len());
+        for (expr, col) in row.iter().zip(&table.schema.columns) {
+            let bound = bind_expr(expr, &EMPTY_SCHEMA)?;
+            ensure!(
+                bound.ty() == col.ty,
+                Error::ColumnTypeMismatch {
+                    column: col.name.clone(),
+                    expected: col.ty,
+                    found: bound.ty(),
+                }
+            );
+            exprs.push(bound);
+        }
+        rows.push(exprs);
+    }
+
+    Ok(Plan::Insert {
+        tid: table.name.clone(),
+        child: Box::new(Plan::Values {
+            rows,
+            schema: table.schema.clone(),
+        }),
+        schema: Arc::new(Schema::new_unchecked(vec![Column::new("count", Type::Int)])),
+    })
 }
 
 pub fn bind_select(cata: &Catalog, select: &ast::Select) -> Result<Plan> {
@@ -152,45 +194,47 @@ pub fn bind_select(cata: &Catalog, select: &ast::Select) -> Result<Plan> {
     })
 }
 
-pub fn bind_insert(cata: &Catalog, insert: &ast::Insert) -> Result<Plan> {
+pub fn bind_update(cata: &Catalog, update: &ast::Update) -> Result<Plan> {
     let table = cata
-        .get(&insert.into.lexeme)
-        .ok_or_else(|| Error::TableNotFound(insert.into.clone()))?;
+        .get(&update.what.lexeme)
+        .ok_or_else(|| Error::TableNotFound(update.what.clone()))?;
 
-    let mut rows = Vec::with_capacity(insert.vals.len());
-    for row in &insert.vals {
-        ensure!(
-            row.len() == table.schema.columns.len(),
-            Error::ArityMismatch {
-                table: insert.into.clone(),
-                expected: table.schema.columns.len() as u16,
-                found: row.len() as u16,
-            }
-        );
+    let mut source = Plan::Scan {
+        tid: table.name.clone(),
+        schema: table.schema.clone(),
+    };
 
-        let mut exprs = Vec::with_capacity(table.schema.columns.len());
-        for (expr, col) in row.iter().zip(&table.schema.columns) {
-            let bound = bind_expr(expr, &EMPTY_SCHEMA)?;
-            ensure!(
-                bound.ty() == col.ty,
-                Error::ColumnTypeMismatch {
-                    column: col.name.clone(),
-                    expected: col.ty,
-                    found: bound.ty(),
-                }
-            );
-            exprs.push(bound);
-        }
-        rows.push(exprs);
+    if let Some(were) = &update.were {
+        let predicate = bind_expr(were, source.schema())?;
+        ensure!(predicate.ty() == Type::Bool, Error::WhereTypeMustBeBool);
+        source = Plan::Filter {
+            child: Box::new(source),
+            predicate,
+        };
     }
 
-    Ok(Plan::Insert {
+    let scope = source.schema();
+    let mut sets = Vec::with_capacity(update.sets.len());
+    for (name, expr) in &update.sets {
+        let index = scope
+            .index_of(&name.lexeme)
+            .ok_or_else(|| Error::ColumnNotFound(name.clone()))?;
+        let bound = bind_expr(expr, scope)?;
+        ensure!(
+            bound.ty() == scope.columns[index].ty,
+            Error::ColumnTypeMismatch {
+                column: scope.columns[index].name.clone(),
+                expected: scope.columns[index].ty,
+                found: bound.ty(),
+            }
+        );
+        sets.push((index, bound));
+    }
+
+    Ok(Plan::Update {
         tid: table.name.clone(),
-        child: Box::new(Plan::Values {
-            rows,
-            schema: table.schema.clone(),
-        }),
-        schema: Arc::new(Schema::new_unchecked(vec![Column::new("count", Type::Int)])),
+        sets,
+        child: Box::new(source),
     })
 }
 

@@ -42,8 +42,6 @@ pub enum Error {
     #[from]
     Bind(binder::Error),
     #[from]
-    Catalog(catalog::Error),
-    #[from]
     Exec(exec::Error),
 }
 
@@ -92,6 +90,10 @@ impl<D: Disk> Database<D> {
                 let plan = binder::bind_select(&self.cata, &select)?;
                 self.run(&plan)
             }
+            Stmt::Update(update) => {
+                let plan = binder::bind_update(&self.cata, &update)?;
+                self.run(&plan)
+            }
             Stmt::Delete(delete) => {
                 let plan = binder::bind_delete(&self.cata, &delete)?;
                 self.run(&plan)
@@ -100,7 +102,7 @@ impl<D: Disk> Database<D> {
     }
 
     fn run(&mut self, plan: &Plan) -> Result<QueryResult> {
-        // println!("{plan:#?}");
+        println!("{plan:#?}");
         let mut root = exec::build::<D>(plan, &self.cata);
         let mut cx = Context::new(&mut self.pool, &mut self.cata);
 
