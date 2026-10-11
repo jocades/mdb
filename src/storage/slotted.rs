@@ -192,6 +192,7 @@ impl SlottedPage {
         if off == 0 { None } else { Some(&self.buf[off..off + len]) }
     }
 
+    #[allow(unused)]
     /// Live records as (slotid, bytes), in slot order
     pub fn iter(&self) -> impl Iterator<Item = (SlotId, &[u8])> {
         (0..self.len()).filter_map(|i| self.get(i).map(|r| (i, r)))

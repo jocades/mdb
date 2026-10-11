@@ -1,10 +1,11 @@
 mod eval;
+pub mod functions;
 
 use std::{io, mem};
 
-use crate::catalog::{self, Catalog, Schema};
+use crate::catalog::{Catalog, Schema};
 use crate::heap::{HeapScan, Rid};
-use crate::plan::{BoundExpr, Plan};
+use crate::plan::{Plan, binder::BoundExpr};
 use crate::storage::{Disk, Pool};
 use crate::value::{Row, Value, codec};
 

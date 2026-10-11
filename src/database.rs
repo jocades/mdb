@@ -1,11 +1,12 @@
 use std::{io, path::Path, sync::Arc};
 
-use crate::catalog::{self, Catalog, Schema};
-use crate::exec::{self, Context};
-use crate::plan::{Plan, binder};
+use crate::catalog::{Catalog, Schema};
+use crate::executor::{self, Context, Operator};
+use crate::plan::binder::{Bound, Util};
+use crate::plan::{self, Plan, binder};
 use crate::sql::{self, ast::Stmt};
 use crate::storage::{DEFAULT_POOL_CAPACITY, Disk, FileDisk, MemDisk, Pool};
-use crate::value::{Row, Value};
+use crate::value::Row;
 
 pub struct Database<D: Disk> {
     pub pool: Pool<D>,
@@ -42,16 +43,31 @@ pub enum Error {
     #[from]
     Bind(binder::Error),
     #[from]
-    Exec(exec::Error),
+    Exec(executor::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug)]
-pub enum QueryResult {
-    None,
-    Affected(usize),
-    Rows { rows: Vec<Row>, schema: Arc<Schema> },
+#[derive(Default)]
+pub struct QueryResult {
+    rows: Vec<Row>,
+    schema: Arc<Schema>,
+    affected: Option<usize>,
+}
+
+pub struct Rows<'db, D: Disk> {
+    cx: Context<'db, D>,
+    root: Box<dyn Operator<D> + 'db>,
+    schema: Arc<Schema>,
+}
+
+impl<D: Disk> Rows<'_, D> {
+    pub fn next(&mut self) -> Result<Option<Row>> {
+        match self.root.next(&mut self.cx)? {
+            Some(tuple) => Ok(Some(tuple.row)),
+            None => Ok(None),
+        }
+    }
 }
 
 impl<D: Disk> Database<D> {
@@ -68,42 +84,16 @@ impl<D: Disk> Database<D> {
     }
 
     fn execute_stmt(&mut self, stmt: Stmt) -> Result<QueryResult> {
-        match stmt {
-            Stmt::CreateTable { name, defs } => {
-                let (name, schema) = binder::bind_create_table(&self.cata, &name, &defs)?;
-                self.cata.create_table(&mut self.pool, name, schema)?;
-                Ok(QueryResult::None)
-            }
-            Stmt::DropTable { name } => {
-                ensure!(
-                    self.cata.get(&name.lexeme).is_some(),
-                    binder::Error::TableNotFound(name)
-                );
-                self.cata.drop_table(&mut self.pool, &name.lexeme)?;
-                Ok(QueryResult::None)
-            }
-            Stmt::Insert(insert) => {
-                let plan = binder::bind_insert(&self.cata, &insert)?;
-                self.run(&plan)
-            }
-            Stmt::Select(select) => {
-                let plan = binder::bind_select(&self.cata, &select)?;
-                self.run(&plan)
-            }
-            Stmt::Update(update) => {
-                let plan = binder::bind_update(&self.cata, &update)?;
-                self.run(&plan)
-            }
-            Stmt::Delete(delete) => {
-                let plan = binder::bind_delete(&self.cata, &delete)?;
-                self.run(&plan)
-            }
+        match binder::bind(&self.cata, stmt)? {
+            Bound::Query(plan) => self.run_plan(plan),
+            Bound::Util(util) => self.run_util(util),
         }
     }
 
-    fn run(&mut self, plan: &Plan) -> Result<QueryResult> {
-        println!("{plan:#?}");
-        let mut root = exec::build::<D>(plan, &self.cata);
+    fn run_plan(&mut self, plan: Plan) -> Result<QueryResult> {
+        println!("{plan}");
+
+        let mut root = executor::build::<D>(&plan, &self.cata);
         let mut cx = Context::new(&mut self.pool, &mut self.cata);
 
         let mut rows = Vec::new();
@@ -111,13 +101,23 @@ impl<D: Disk> Database<D> {
             rows.push(tuple.row)
         }
 
-        Ok(match cx.rows_affected {
-            Some(n) => QueryResult::Affected(n),
-            None => QueryResult::Rows {
-                rows,
-                schema: plan.schema().clone(),
-            },
+        Ok(QueryResult {
+            rows,
+            schema: plan.schema().clone(),
+            affected: cx.rows_affected,
         })
+    }
+
+    fn run_util(&mut self, util: Util) -> Result<QueryResult> {
+        match util {
+            Util::CreateTable { name, schema } => {
+                self.cata.create_table(&mut self.pool, name, schema)?;
+            }
+            Util::DropTable { name } => {
+                self.cata.drop_table(&mut self.pool, &name)?;
+            }
+        }
+        Ok(QueryResult::default())
     }
 }
 
@@ -158,16 +158,14 @@ impl Sql<'_> {
 
 impl std::fmt::Display for QueryResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            QueryResult::None => Ok(()),
-            QueryResult::Affected(n) => write!(f, "{n} row(s) affected"),
-            QueryResult::Rows { rows, schema } => {
-                if rows.len() != 0 {
-                    writeln!(f, "{}", Tabular::new(schema, rows))?;
-                }
-                write!(f, "({} rows)", rows.len())
-            }
+        if self.rows.len() != 0 {
+            writeln!(f, "{}", Tabular::new(&self.schema, &self.rows))?;
+            writeln!(f, "({} rows)", self.rows.len())?;
         }
+        if let Some(n) = self.affected {
+            writeln!(f, "{n} row(s) affected")?;
+        }
+        Ok(())
     }
 }
 

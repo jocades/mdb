@@ -183,6 +183,7 @@ impl<D: Disk> Drop for Pool<D> {
     }
 }
 
+#[allow(unused)]
 impl Pool<MemDisk> {
     pub fn reads(&self) -> usize {
         self.disk.reads

@@ -1,6 +1,5 @@
 pub mod binder;
-mod bound;
-pub use bound::BoundExpr;
+use binder::BoundExpr;
 
 use crate::catalog::{EMPTY_SCHEMA, Schema};
 use std::sync::Arc;
@@ -57,5 +56,61 @@ impl Plan {
             | Plan::Insert { schema, .. }
             | Plan::Values { schema, .. } => schema,
         }
+    }
+}
+
+fn display(node: &Plan, f: &mut std::fmt::Formatter<'_>, d: usize) -> std::fmt::Result {
+    macro_rules! wln {
+        ($b:expr, $depth:expr, $($args:tt)*) => {{
+            write!($b, "{:>width$}", "", width = $depth * 2)?;
+            writeln!($b, $($args)*)?;
+        }};
+    }
+    match node {
+        Plan::OneRow => wln!(f, d, "OneRow"),
+        Plan::Scan { tid, .. } => {
+            wln!(f, d, "SeqScan({tid})");
+        }
+        Plan::Filter { child, predicate } => {
+            wln!(f, d, "Filter({predicate:?})");
+            display(child, f, d + 1)?;
+        }
+        Plan::Project { child, schema, .. } => {
+            let p = schema
+                .columns
+                .iter()
+                .map(|col| col.name.as_ref())
+                .collect::<Vec<_>>()
+                .join(",");
+            wln!(f, d, "Project({p})");
+            display(child, f, d + 1)?;
+        }
+        Plan::Values { rows, .. } => {
+            let vs = rows
+                .iter()
+                .map(|row| format!("{row:?}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            wln!(f, d, "Values({vs})");
+        }
+        Plan::Insert { tid, child, .. } => {
+            wln!(f, d, "Insert({tid})");
+            display(child, f, d + 1)?;
+        }
+        Plan::Delete { tid, child, .. } => {
+            wln!(f, d, "Delete({tid})");
+            display(child, f, d + 1)?;
+        }
+        Plan::Update { tid, child, .. } => {
+            wln!(f, d, "Update({tid})");
+            display(child, f, d + 1)?;
+        }
+    }
+    Ok(())
+}
+
+impl std::fmt::Display for Plan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        display(self, f, 0)
     }
 }

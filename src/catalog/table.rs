@@ -27,7 +27,7 @@ impl Table {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Schema {
     pub columns: Vec<Column>,
 }

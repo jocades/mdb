@@ -3,7 +3,7 @@ mod macros;
 mod bytes;
 mod catalog;
 mod database;
-mod exec;
+mod executor;
 mod heap;
 mod plan;
 mod repl;
@@ -71,9 +71,9 @@ fn run<D: Disk>(mut db: Database<D>) {
 }
 
 fn execute(db: &mut Database<impl Disk>, sql: &str) {
-    match db.execute_batch(&sql) {
-        Err(err) => report(err, &sql),
-        Ok(results) => results.iter().for_each(|res| println!("{res}")),
+    match db.execute_batch(sql) {
+        Err(err) => report(err, sql),
+        Ok(results) => results.iter().for_each(|res| print!("{res}")),
     };
 }
 
@@ -129,6 +129,7 @@ fn report(err: database::Error, src: &str) {
             plan::binder::Error::WhereTypeMustBeBool => {
                 println!("error: where type must be boolean");
             }
+            e => println!("error: {e:?}"),
         },
         Error::Io(_) | Error::Exec(_) => println!("error: {err:?}"),
     }

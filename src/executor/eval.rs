@@ -1,5 +1,5 @@
 use crate::sql::ast::BinOp;
-use crate::{plan::BoundExpr, value::Value};
+use crate::{plan::binder::BoundExpr, value::Value};
 
 #[derive(Debug)]
 pub enum EvalError {
@@ -43,12 +43,12 @@ pub fn eval(expr: &BoundExpr, env: &[Value]) -> Result<Value, EvalError> {
             compute(*op, lhs, rhs)
         }
 
-        BoundExpr::Call { fun, args, .. } => {
+        BoundExpr::Call { func, args } => {
             let args = args
                 .iter()
                 .map(|arg| eval(arg, env))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(fun(&args))
+            (func.eval)(&args)
         }
     }
 }
